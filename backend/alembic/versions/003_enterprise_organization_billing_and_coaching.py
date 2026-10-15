@@ -1,7 +1,7 @@
 """003_enterprise_organization_billing_and_coaching
 
 Revision ID: 003_enterprise_org_billing
-Revises: 002_user_sessions_and_branch_scope
+Revises: 002_user_sessions_branch_scope
 Create Date: 2026-10-14 22:25:00.000000
 
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "003_enterprise_org_billing"
-down_revision: Union[str, Sequence[str], None] = "002_user_sessions_and_branch_scope"
+down_revision: Union[str, Sequence[str], None] = "002_user_sessions_branch_scope"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -24,7 +24,7 @@ def upgrade() -> None:
         sa.Column("code", sa.String(length=30), nullable=False),
         sa.Column("contact_email", sa.String(length=255), nullable=True),
         sa.Column("contact_phone", sa.String(length=50), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column("state", sa.String(length=100), server_default="Maharashtra", nullable=False),
         sa.Column("phone", sa.String(length=50), nullable=True),
         sa.Column("email", sa.String(length=255), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column("branch_id", sa.String(length=50), nullable=False),
         sa.Column("granted_at", sa.Date(), server_default=sa.func.current_date(), nullable=False),
         sa.Column("expires_at", sa.Date(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("notes", sa.String(length=255), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -90,7 +90,7 @@ def upgrade() -> None:
         sa.Column("currency", sa.String(length=10), server_default="₹", nullable=False),
         sa.Column("effective_from", sa.Date(), nullable=False),
         sa.Column("effective_to", sa.Date(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["plan_id"], ["membership_plans.id"], ondelete="CASCADE"),
@@ -133,7 +133,7 @@ def upgrade() -> None:
         sa.Column("experience_years", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("rating", sa.Numeric(precision=3, scale=2), server_default=sa.text("5.00"), nullable=False),
         sa.Column("max_clients", sa.Integer(), server_default=sa.text("20"), nullable=False),
-        sa.Column("is_accepting_clients", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_accepting_clients", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
@@ -149,7 +149,7 @@ def upgrade() -> None:
         sa.Column("member_id", sa.String(length=36), nullable=False),
         sa.Column("assigned_by_id", sa.String(length=36), nullable=True),
         sa.Column("assigned_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -227,7 +227,7 @@ def upgrade() -> None:
         sa.Column("reference_number", sa.String(length=100), nullable=True),
         sa.Column("idempotency_key", sa.String(length=100), nullable=True),
         sa.Column("status", sa.String(length=30), server_default="completed", nullable=False),
-        sa.Column("is_reversal", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("is_reversal", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("reversed_payment_id", sa.String(length=36), nullable=True),
         sa.Column("recorded_by_id", sa.String(length=36), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),

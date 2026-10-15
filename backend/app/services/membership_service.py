@@ -177,13 +177,32 @@ def freeze_membership(
     Freezes an active membership and extends valid_until by freeze_days.
     Check-in is prohibited while in 'frozen' status.
     """
+    # Branch isolation: actor must belong to same branch as user unless org admin
+    if actor.role not in {"org_admin", "admin"}:
+        if actor.branch_id and user.branch_id and actor.branch_id != user.branch_id:
+            raise PermissionError(f"Access denied: Cannot freeze membership of member from branch '{user.branch_id}'.")
+
     if user.membership_status != "active":
         raise ValueError(f"Only active memberships can be frozen. Current status: '{user.membership_status}'.")
+
+    today = date.today()
+
+    # Reject overlapping active freeze windows
+    active_freeze = (
+        db.query(MembershipChange)
+        .filter(
+            MembershipChange.user_id == user.id,
+            MembershipChange.action_type == "freeze",
+            MembershipChange.end_date >= today,
+        )
+        .first()
+    )
+    if active_freeze:
+        raise ValueError("Member already has an active or overlapping freeze period.")
 
     if freeze_days <= 0 or freeze_days > 90:
         raise ValueError("Freeze duration must be between 1 and 90 days.")
 
-    today = date.today()
     old_valid_until = user.valid_until or today
     new_valid_until = old_valid_until + timedelta(days=freeze_days)
 
@@ -266,6 +285,10 @@ def cancel_membership(
     reason: Optional[str] = None,
 ) -> User:
     """Cancels a membership and terminates future gym floor access."""
+    if actor.role not in {"org_admin", "admin"}:
+        if actor.branch_id and user.branch_id and actor.branch_id != user.branch_id:
+            raise PermissionError(f"Access denied: Cannot cancel membership of member from branch '{user.branch_id}'.")
+
     today = date.today()
     old_status = user.membership_status
 

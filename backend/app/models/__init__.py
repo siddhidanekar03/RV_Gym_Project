@@ -10,11 +10,21 @@ from backend.app.models.membership import MembershipPlan, PlanPrice, Enrollment,
 from backend.app.models.user import User
 from backend.app.models.trainer import TrainerProfile, TrainerMemberAssignment
 from backend.app.models.billing import Invoice, InvoiceLine, Payment, InvoiceSequence
-from backend.app.models.attendance import AttendanceRecord
+from backend.app.models.attendance import AttendanceRecord, AttendanceAttempt, ConsumedQRToken
 from backend.app.models.personal_record import PersonalRecord
 from backend.app.models.contact import ContactInquiry
 from backend.app.models.audit import AuditLog
 from backend.app.models.session import UserSession
+from backend.app.models.announcement import Announcement
+from backend.app.models.leaderboard import PointLedgerEntry
+from backend.app.models.workout import (
+    WorkoutPlan,
+    WorkoutPlanAssignment,
+    WorkoutPlanExercise,
+    WorkoutSession,
+    WorkoutSessionExercise,
+    FitnessProgressRecord,
+)
 
 __all__ = [
     "Base",
@@ -35,8 +45,18 @@ __all__ = [
     "Payment",
     "InvoiceSequence",
     "AttendanceRecord",
+    "AttendanceAttempt",
+    "ConsumedQRToken",
     "PersonalRecord",
     "ContactInquiry",
     "AuditLog",
     "UserSession",
+    "Announcement",
+    "PointLedgerEntry",
+    "WorkoutPlan",
+    "WorkoutPlanAssignment",
+    "WorkoutPlanExercise",
+    "WorkoutSession",
+    "WorkoutSessionExercise",
+    "FitnessProgressRecord",
 ]

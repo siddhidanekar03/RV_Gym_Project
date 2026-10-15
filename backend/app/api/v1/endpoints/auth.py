@@ -23,6 +23,7 @@ from backend.app.models.user import User
 from backend.app.models.attendance import AttendanceRecord
 from backend.app.models.personal_record import PersonalRecord
 from backend.app.models.audit import AuditLog
+from backend.app.services.attendance_service import reconcile_member_identity_on_account_link
 from backend.app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
@@ -150,15 +151,22 @@ def register(
             detail="An account with this email address already exists.",
         )
 
-    # Generate unique membership code RVF-YYYY-XXX
-    year = date.today().year
-    rand_code = random.randint(100, 999)
-    membership_code = f"RVF-{year}-{rand_code}"
-
-    # Ensure code uniqueness
-    while db.query(User).filter(User.membership_id == membership_code).first():
+    # Use existing offline membership card if provided, or generate unique RVF-YYYY-XXX
+    if payload.membershipId and payload.membershipId.strip():
+        membership_code = payload.membershipId.strip().upper()
+        existing_card_user = db.query(User).filter(User.membership_id == membership_code).first()
+        if existing_card_user:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Membership card '{membership_code}' is already linked to another registered account.",
+            )
+    else:
+        year = date.today().year
         rand_code = random.randint(100, 999)
         membership_code = f"RVF-{year}-{rand_code}"
+        while db.query(User).filter(User.membership_id == membership_code).first():
+            rand_code = random.randint(100, 999)
+            membership_code = f"RVF-{year}-{rand_code}"
 
     hashed = hash_password(payload.password)
     new_user = User(
@@ -175,6 +183,9 @@ def register(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Reconcile any pre-existing unlinked offline attendance records or attempts
+    reconcile_member_identity_on_account_link(db=db, user=new_user)
 
     # Establish server-side session
     session, raw_token, csrf_token = create_user_session(db, new_user, request)
@@ -263,7 +274,7 @@ def get_me(
         key=CSRF_COOKIE_NAME,
         value=session.csrf_token,
         httponly=False,
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.is_cookie_secure(),
         samesite="lax",
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -320,7 +331,7 @@ def get_csrf(request: Request, response: Response, db: Session = Depends(get_db)
         key=CSRF_COOKIE_NAME,
         value=csrf_val,
         httponly=False,
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.is_cookie_secure(),
         samesite="lax",
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,

@@ -10,8 +10,9 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=150)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=100)
+    password: str = Field(..., min_length=8, max_length=100)
     phone: Optional[str] = Field(None, max_length=50)
+    membershipId: Optional[str] = Field(None, max_length=50)
     acceptedTerms: bool = Field(...)
 
 

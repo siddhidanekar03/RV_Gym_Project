@@ -131,10 +131,9 @@ export default function App() {
 
       {/* Authenticated Dashboard / Management Portal View */}
       {showPortal && currentUser ? (
-        currentUser.role === 'admin' ? (
+        ['admin', 'org_admin', 'branch_manager', 'front_desk', 'staff'].includes(currentUser.role) ? (
           <AdminDashboard
             user={currentUser}
-            token={token}
             onClose={() => setShowPortal(false)}
           />
         ) : (

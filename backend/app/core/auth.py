@@ -20,17 +20,23 @@ CSRF_HEADER_NAME = "x-csrf-token"
 
 
 def get_client_ip(request: Optional[Any] = None) -> Optional[str]:
+    """
+    Resolve client IP address with reverse-proxy trust validation.
+    Only trusts X-Forwarded-For if request comes from a configured trusted proxy or non-production environment.
+    """
     if not request:
         return None
+    client_obj = getattr(request, "client", None)
+    direct_ip = client_obj.host if (client_obj and hasattr(client_obj, "host")) else None
+
     headers = getattr(request, "headers", None)
     if headers and hasattr(headers, "get"):
         forwarded = headers.get("x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
-    client_obj = getattr(request, "client", None)
-    if client_obj and hasattr(client_obj, "host"):
-        return client_obj.host
-    return None
+            # Allow in development/test or when direct peer is in trusted proxies
+            if settings.ENVIRONMENT not in {"production", "staging"} or (direct_ip and direct_ip in settings.TRUSTED_PROXIES):
+                return forwarded.split(",")[0].strip()
+    return direct_ip
 
 
 def create_user_session(
@@ -77,7 +83,8 @@ def set_auth_cookies(
     raw_csrf_token: str,
 ) -> None:
     """Set secure HttpOnly session cookie and readable CSRF cookie."""
-    is_prod = settings.ENVIRONMENT == "production"
+    is_secure = settings.is_cookie_secure()
+    samesite = settings.COOKIE_SAMESITE
     max_age_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
     # 1. HttpOnly signed session cookie
@@ -85,8 +92,8 @@ def set_auth_cookies(
         key=SESSION_COOKIE_NAME,
         value=raw_session_token,
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=max_age_seconds,
     )
@@ -96,8 +103,8 @@ def set_auth_cookies(
         key=CSRF_COOKIE_NAME,
         value=raw_csrf_token,
         httponly=False,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=max_age_seconds,
     )
@@ -105,20 +112,21 @@ def set_auth_cookies(
 
 def clear_auth_cookies(response: Response) -> None:
     """Clear session and CSRF cookies."""
-    is_prod = settings.ENVIRONMENT == "production"
+    is_secure = settings.is_cookie_secure()
+    samesite = settings.COOKIE_SAMESITE
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
     )
     response.delete_cookie(
         key=CSRF_COOKIE_NAME,
         path="/",
         httponly=False,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
     )
 
 

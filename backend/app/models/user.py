@@ -14,6 +14,13 @@ if TYPE_CHECKING:
     from backend.app.models.organization import Branch, MemberBranchAccess
     from backend.app.models.trainer import TrainerProfile
     from backend.app.models.billing import Invoice, Payment
+    from backend.app.models.leaderboard import PointLedgerEntry
+    from backend.app.models.workout import (
+        WorkoutPlan,
+        WorkoutPlanAssignment,
+        WorkoutSession,
+        FitnessProgressRecord,
+    )
 
 
 class User(Base, TimestampMixin):
@@ -48,6 +55,14 @@ class User(Base, TimestampMixin):
     streak_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Leaderboard & Gamification Privacy Fields
+    leaderboard_alias: Mapped[Optional[str]] = mapped_column(
+        String(50), unique=True, index=True, nullable=True
+    )
+    is_leaderboard_visible: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+
     # Branch and Coaching Assignment Scope
     branch_id: Mapped[str] = mapped_column(
         String(50), ForeignKey("branches.id"), default="narsobawadi", nullable=False, index=True
@@ -73,7 +88,10 @@ class User(Base, TimestampMixin):
         cascade="all, delete-orphan",
     )
     attendance_records: Mapped[List["AttendanceRecord"]] = relationship(
-        "AttendanceRecord", back_populates="user", cascade="all, delete-orphan"
+        "AttendanceRecord",
+        foreign_keys="AttendanceRecord.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
     personal_records: Mapped[List["PersonalRecord"]] = relationship(
         "PersonalRecord",
@@ -110,4 +128,28 @@ class User(Base, TimestampMixin):
     )
     payments: Mapped[List["Payment"]] = relationship(
         "Payment", foreign_keys="Payment.user_id", back_populates="user"
+    )
+    point_ledger_entries: Mapped[List["PointLedgerEntry"]] = relationship(
+        "PointLedgerEntry",
+        foreign_keys="PointLedgerEntry.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    workout_plan_assignments: Mapped[List["WorkoutPlanAssignment"]] = relationship(
+        "WorkoutPlanAssignment",
+        foreign_keys="WorkoutPlanAssignment.member_id",
+        back_populates="member",
+        cascade="all, delete-orphan",
+    )
+    workout_sessions: Mapped[List["WorkoutSession"]] = relationship(
+        "WorkoutSession",
+        foreign_keys="WorkoutSession.member_id",
+        back_populates="member",
+        cascade="all, delete-orphan",
+    )
+    fitness_progress_records: Mapped[List["FitnessProgressRecord"]] = relationship(
+        "FitnessProgressRecord",
+        foreign_keys="FitnessProgressRecord.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )

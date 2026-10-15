@@ -23,9 +23,17 @@ def verify_trainer_access_to_member(trainer: User, member: User) -> None:
     """
     Enforce server-side isolation for trainers.
     If user has 'trainer' role, they may only view members assigned to them.
-    Admins, managers, and staff retain supervisor visibility.
+    Branch managers and staff may only view members of their own branch.
+    Organization admins retain cross-branch visibility.
     """
-    if trainer.role in ("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff"):
+    if trainer.role in ("org_admin", "admin"):
+        return
+
+    if trainer.role in ("branch_manager", "manager", "front_desk", "staff"):
+        if trainer.branch_id and member.branch_id and trainer.branch_id != member.branch_id:
+            raise PermissionError(
+                f"Access denied: Member belongs to branch '{member.branch_id}', not your branch '{trainer.branch_id}'."
+            )
         return
 
     if trainer.role == "trainer":
@@ -58,6 +66,13 @@ def assign_member_to_trainer(
     member = db.query(User).filter(User.id == member_id, User.role == "member").first()
     if not member:
         raise ValueError(f"Member '{member_id}' not found.")
+
+    # Branch isolation for managers/staff: actor, member, and trainer must share branch
+    if actor.role not in ("org_admin", "admin"):
+        if actor.branch_id and member.branch_id and actor.branch_id != member.branch_id:
+            raise ValueError(f"Access denied: You cannot assign members from branch '{member.branch_id}'.")
+        if actor.branch_id and trainer.branch_id and actor.branch_id != trainer.branch_id:
+            raise ValueError(f"Access denied: You cannot assign trainers from branch '{trainer.branch_id}'.")
 
     # Check coach capacity
     if trainer.trainer_profile:

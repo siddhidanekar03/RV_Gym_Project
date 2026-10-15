@@ -6,14 +6,22 @@ import {
   Shield,
   ArrowLeft,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  QrCode,
+  LayoutDashboard,
+  Megaphone,
+  Dumbbell
 } from 'lucide-react';
 import { fetchAdminOverview } from '../api';
+import StaffAttendanceDesk from './StaffAttendanceDesk';
+import AdminAnnouncements from './AdminAnnouncements';
+import AdminWorkouts from './AdminWorkouts';
 
 export default function AdminDashboard({ user, token, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [currentSection, setCurrentSection] = useState('attendance'); // 'attendance' | 'announcements' | 'workouts' | 'overview'
 
   const loadData = async () => {
     setLoading(true);
@@ -55,23 +63,71 @@ export default function AdminDashboard({ user, token, onClose }) {
         </div>
       </div>
 
+      {/* Staff Section Switcher */}
+      <div className="admin-subnav-bar">
+        <button
+          type="button"
+          className={`admin-nav-tab ${currentSection === 'attendance' ? 'active' : ''}`}
+          onClick={() => setCurrentSection('attendance')}
+        >
+          <QrCode size={16} />
+          <span>Attendance & Check-In Desk</span>
+          <span className="subnav-pill-gold">Live</span>
+        </button>
+        <button
+          type="button"
+          className={`admin-nav-tab ${currentSection === 'announcements' ? 'active' : ''}`}
+          onClick={() => setCurrentSection('announcements')}
+        >
+          <Megaphone size={16} />
+          <span>Announcements & Operations</span>
+        </button>
+        <button
+          type="button"
+          className={`admin-nav-tab ${currentSection === 'workouts' ? 'active' : ''}`}
+          onClick={() => setCurrentSection('workouts')}
+        >
+          <Dumbbell size={16} />
+          <span>Workout Plans & Coaching</span>
+        </button>
+        <button
+          type="button"
+          className={`admin-nav-tab ${currentSection === 'overview' ? 'active' : ''}`}
+          onClick={() => setCurrentSection('overview')}
+        >
+          <LayoutDashboard size={16} />
+          <span>Facility Roster & Overview</span>
+        </button>
+      </div>
+
       <div className="dashboard-main-content">
-        {loading && (
-          <div className="status-container" role="status">
-            <RefreshCw className="spinner-icon gold-text" size={32} />
-            <p>Loading staff overview and active facility records...</p>
-          </div>
+        {currentSection === 'attendance' && (
+          <StaffAttendanceDesk currentUser={user} branchId={user?.branch_id || 'narsobawadi'} />
         )}
-
-        {error && (
-          <div className="error-banner" role="alert">
-            <AlertCircle size={24} className="danger-text" />
-            <p>{error}</p>
-          </div>
+        {currentSection === 'announcements' && (
+          <AdminAnnouncements currentUser={user} />
         )}
+        {currentSection === 'workouts' && (
+          <AdminWorkouts currentUser={user} />
+        )}
+        {currentSection === 'overview' && (
+          <>
+            {loading && (
+              <div className="status-container" role="status">
+                <RefreshCw className="spinner-icon gold-text" size={32} />
+                <p>Loading staff overview and active facility records...</p>
+              </div>
+            )}
 
-        {!loading && !error && data && (
-          <div className="admin-content-flow">
+            {error && (
+              <div className="error-banner" role="alert">
+                <AlertCircle size={24} className="danger-text" />
+                <p>{error}</p>
+              </div>
+            )}
+
+            {!loading && !error && data && (
+              <div className="admin-content-flow">
             {/* Real-time Metric Cards */}
             <div className="admin-stats-grid">
               <div className="admin-stat-card">
@@ -191,7 +247,9 @@ export default function AdminDashboard({ user, token, onClose }) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </>
+    )}
+  </div>
+</div>
   );
 }

@@ -41,17 +41,15 @@ class SlidingWindowRateLimiter:
 limiter = SlidingWindowRateLimiter()
 
 
+from backend.app.core.auth import get_client_ip
+
+
 def rate_limit(max_requests: int = 10, window_seconds: int = 60) -> Callable:
     """FastAPI dependency for rate limiting by client IP and path."""
 
     async def dependency(request: Request) -> None:
-        # Determine client identifier
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        else:
-            client_ip = request.client.host if request.client else "unknown_ip"
-
+        # Determine client identifier with reverse-proxy trust validation
+        client_ip = get_client_ip(request) or "unknown_ip"
         key = f"{client_ip}:{request.url.path}"
         limiter.check_rate_limit(key, max_requests, window_seconds)
 

@@ -1,0 +1,53 @@
+# ==============================================================================
+# RVFitness Staging Multi-Stage Container Packaging
+# ==============================================================================
+# Builds static React 19 / Vite frontend and packages Python 3.11 FastAPI backend
+# without exposing development servers publicly.
+# ==============================================================================
+
+# Stage 1: Build React 19 / Vite Static Frontend Bundle
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build
+
+# Copy dependency manifests
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+# Copy frontend source and compile static production distribution
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Python 3.11 FastAPI Staging Runtime
+FROM python:3.11-slim AS runtime
+WORKDIR /app
+
+# Install minimal system runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python backend dependencies
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+
+# Copy application source, Alembic migrations, root configuration, and verification tools
+COPY backend /app/backend
+COPY alembic.ini /app/alembic.ini
+COPY scripts /app/scripts
+
+# Copy compiled frontend static bundle from Stage 1 into /app/frontend/dist
+COPY --from=frontend-builder /build/dist /app/frontend/dist
+
+# Create persistent storage mount directory for user and announcement media
+RUN mkdir -p /app/backend/app/uploads/announcements
+
+# Expose API and static serving port
+EXPOSE 8000
+
+# Set Python environment
+ENV PYTHONPATH=/app
+ENV ENVIRONMENT=staging
+
+# Launch single-worker Uvicorn process for process-local rate limiting safety
+CMD ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

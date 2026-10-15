@@ -12,6 +12,8 @@ from backend.app.api.v1.endpoints import (
     billing,
     trainer,
     branches,
+    announcements,
+    workouts,
 )
 
 api_router = APIRouter()
@@ -28,3 +30,5 @@ api_router.include_router(admin.router, tags=["Admin"])
 api_router.include_router(billing.router, tags=["Billing"])
 api_router.include_router(trainer.router, tags=["Trainers"])
 api_router.include_router(branches.router, tags=["Branches"])
+api_router.include_router(announcements.router, tags=["Announcements"])
+api_router.include_router(workouts.router, tags=["Workouts"])

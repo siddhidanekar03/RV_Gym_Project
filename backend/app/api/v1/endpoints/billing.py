@@ -1,13 +1,14 @@
 from typing import List, Optional
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Response
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.core.database import get_db
 from backend.app.core.auth import get_current_user, require_roles, require_csrf, verify_branch_access
 from backend.app.models.user import User
 from backend.app.models.billing import Invoice, Payment
-from backend.app.services.billing_service import record_offline_payment, reverse_payment
+from backend.app.services.billing_service import record_offline_payment, reverse_payment, generate_invoice_pdf
 from backend.app.schemas.billing import (
     InvoiceDetail,
     InvoiceLineItem,
@@ -109,6 +110,38 @@ def get_invoice(
     return _format_invoice(invoice)
 
 
+@router.get(
+    "/billing/invoices/{invoice_id}/pdf",
+    summary="Download Official Invoice PDF",
+    description="Generate and download a branded PDF tax invoice with branch and owner authorization.",
+)
+def download_invoice_pdf(
+    invoice_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found.")
+
+    if user.role == "member" and invoice.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: You can only view invoices issued to your account.",
+        )
+    if user.role in ("branch_manager", "manager", "front_desk", "staff"):
+        verify_branch_access(user, invoice.branch_id)
+
+    pdf_bytes = generate_invoice_pdf(invoice, db)
+    filename = f"RVFitness_Invoice_{invoice.invoice_number}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+
 @router.post(
     "/billing/payments",
     response_model=PaymentSubmissionResponse,
@@ -117,6 +150,7 @@ def get_invoice(
 )
 def submit_payment(
     payload: PaymentSubmissionRequest,
+    idempotency_key_header: Optional[str] = Header(None, alias="Idempotency-Key"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaymentSubmissionResponse:
@@ -126,6 +160,13 @@ def submit_payment(
 
     verify_branch_access(user, invoice.branch_id)
 
+    key = (idempotency_key_header or payload.idempotencyKey or "").strip()
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Idempotency-Key is required on payment submissions.",
+        )
+
     try:
         payment = record_offline_payment(
             db=db,
@@ -134,10 +175,27 @@ def submit_payment(
             payment_method=payload.paymentMethod,
             recorded_by=user,
             reference_number=payload.referenceNumber,
-            idempotency_key=payload.idempotencyKey,
+            idempotency_key=key,
             notes=payload.notes,
         )
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Handle concurrent race: look up existing payment inserted by competing transaction
+        existing = db.query(Payment).filter(Payment.idempotency_key == key).first()
+        if existing:
+            if (
+                existing.invoice_id != payload.invoiceId
+                or existing.amount != Decimal(str(payload.amount))
+                or existing.payment_method != payload.paymentMethod
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Idempotency key '{key}' was previously used with a different payment payload.",
+                )
+            payment = existing
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data integrity collision on payment submission.")
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -178,6 +236,12 @@ def handle_reversal(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaymentReversalResponse:
+    target_payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not target_payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment record not found.")
+
+    verify_branch_access(user, target_payment.branch_id)
+
     try:
         reversal = reverse_payment(
             db=db,

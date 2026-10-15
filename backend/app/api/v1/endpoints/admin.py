@@ -20,34 +20,34 @@ router = APIRouter()
 @router.get(
     "/admin/overview",
     response_model=AdminOverviewResponse,
-    dependencies=[Depends(require_roles("admin", "manager", "staff"))],
+    dependencies=[Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff"))],
     summary="Staff Operations Desk Overview",
 )
 def get_admin_overview(
-    user: User = Depends(require_roles("admin", "manager", "staff")),
+    user: User = Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff")),
     db: Session = Depends(get_db),
 ) -> AdminOverviewResponse:
     today = date.today()
+    is_org_wide = user.role in ("org_admin", "admin")
 
     # 1. Truthful member count (active members in the database)
-    total_members = (
-        db.query(func.count(User.id))
-        .filter(User.role == "member", User.is_active == True)
-        .scalar()
-        or 0
-    )
+    member_q = db.query(func.count(User.id)).filter(User.role == "member", User.is_active == True)
+    if not is_org_wide and user.branch_id:
+        member_q = member_q.filter(User.branch_id == user.branch_id)
+    total_members = member_q.scalar() or 0
 
     # 2. Truthful active today count (actual check-in records recorded today)
-    active_today = (
-        db.query(func.count(func.distinct(AttendanceRecord.user_id)))
-        .filter(AttendanceRecord.check_in_date == today)
-        .scalar()
-        or 0
-    )
+    attendance_q = db.query(func.count(func.distinct(AttendanceRecord.user_id))).filter(AttendanceRecord.check_in_date == today)
+    if not is_org_wide and user.branch_id:
+        attendance_q = attendance_q.filter(AttendanceRecord.branch_id == user.branch_id)
+    active_today = attendance_q.scalar() or 0
 
     # 3. Recent enrollments from database
+    enrollment_q = db.query(Enrollment)
+    if not is_org_wide and user.branch_id:
+        enrollment_q = enrollment_q.filter(Enrollment.branch_id == user.branch_id)
     enrollments_db = (
-        db.query(Enrollment)
+        enrollment_q
         .order_by(Enrollment.enrolled_at.desc())
         .limit(20)
         .all()
