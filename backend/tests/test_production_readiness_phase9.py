@@ -47,22 +47,60 @@ def test_production_wildcard_cors_rejection():
         ENVIRONMENT="production",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
         SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY="b" * 64,
         CORS_ORIGINS=["*"],
     )
     with pytest.raises(ValueError, match="Wildcard CORS origin"):
         validate_production_security(wildcard_settings)
 
 
+def test_production_missing_qr_key_rejection():
+    """Verify that omitting QR_SIGNING_KEY in production is strictly rejected."""
+    missing_qr_settings = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
+        SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY=None,
+    )
+    with pytest.raises(ValueError, match="QR_SIGNING_KEY must be explicitly configured"):
+        validate_production_security(missing_qr_settings)
+
+
+def test_production_placeholder_qr_key_rejection():
+    """Verify that placeholder QR signing keys are rejected in production."""
+    placeholder_qr_settings = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
+        SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY="change-this-placeholder-qr-signing-key-64-characters-long-entropy",
+    )
+    with pytest.raises(ValueError, match="default or placeholder"):
+        validate_production_security(placeholder_qr_settings)
+
+
 def test_production_weak_qr_key_rejection():
-    """Verify that weak or placeholder dedicated QR signing keys are rejected in production."""
+    """Verify that short QR signing keys (< 32 chars) are rejected in production."""
     weak_qr_settings = Settings(
         ENVIRONMENT="production",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
         SECRET_KEY="a" * 64,
-        QR_SIGNING_KEY="change-this-short",
+        QR_SIGNING_KEY="short-key-less-than-32-chars",
     )
-    with pytest.raises(ValueError, match="QR_SIGNING_KEY must be a secure string"):
+    with pytest.raises(ValueError, match="at least 32 characters"):
         validate_production_security(weak_qr_settings)
+
+
+def test_production_identical_qr_key_and_secret_key_rejection():
+    """Verify that QR_SIGNING_KEY cannot be equal to SECRET_KEY in production."""
+    identical_key = "s" * 64
+    identical_settings = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
+        SECRET_KEY=identical_key,
+        QR_SIGNING_KEY=identical_key,
+    )
+    with pytest.raises(ValueError, match="distinct and independent from SECRET_KEY"):
+        validate_production_security(identical_settings)
 
 
 def test_production_disabled_cookie_secure_rejection():
@@ -71,6 +109,7 @@ def test_production_disabled_cookie_secure_rejection():
         ENVIRONMENT="production",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
         SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY="b" * 64,
         COOKIE_SECURE=False,
     )
     with pytest.raises(ValueError, match="COOKIE_SECURE cannot be explicitly disabled"):
@@ -84,6 +123,7 @@ def test_valid_production_configuration_passes():
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
         SECRET_KEY="f" * 64,
         QR_SIGNING_KEY="e" * 64,
+        REDIS_URL="redis://127.0.0.1:6379/0",
         CORS_ORIGINS=["https://rvfitness.in", "https://app.rvfitness.in"],
         COOKIE_SECURE=True,
     )
@@ -98,6 +138,7 @@ def test_staging_enforces_production_grade_security():
             ENVIRONMENT="staging",
             DATABASE_URL="sqlite:///./rvfitness_staging.db",
             SECRET_KEY="a" * 64,
+            QR_SIGNING_KEY="b" * 64,
         )
 
     # 2. Staging rejects placeholder secret key
@@ -105,6 +146,7 @@ def test_staging_enforces_production_grade_security():
         ENVIRONMENT="staging",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
         SECRET_KEY="change-this-placeholder-secret-key-that-is-long-enough",
+        QR_SIGNING_KEY="b" * 64,
     )
     with pytest.raises(ValueError, match="SECRET_KEY must be a cryptographically secure random string"):
         validate_production_security(weak_staging)
@@ -114,20 +156,90 @@ def test_staging_enforces_production_grade_security():
         ENVIRONMENT="staging",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
         SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY="b" * 64,
         CORS_ORIGINS=["*"],
     )
     with pytest.raises(ValueError, match="Wildcard CORS origin"):
         validate_production_security(wildcard_staging)
 
-    # 4. Valid staging passes and auto-enables secure cookies
+    # 4. Staging rejects missing QR signing key
+    missing_qr_staging = Settings(
+        ENVIRONMENT="staging",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
+        SECRET_KEY="a" * 64,
+        QR_SIGNING_KEY=None,
+    )
+    with pytest.raises(ValueError, match="QR_SIGNING_KEY must be explicitly configured"):
+        validate_production_security(missing_qr_staging)
+
+    # 5. Staging rejects identical QR signing key
+    identical_staging = Settings(
+        ENVIRONMENT="staging",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
+        SECRET_KEY="k" * 64,
+        QR_SIGNING_KEY="k" * 64,
+    )
+    with pytest.raises(ValueError, match="distinct and independent from SECRET_KEY"):
+        validate_production_security(identical_staging)
+
+    # 6. Valid staging passes and auto-enables secure cookies
     valid_staging = Settings(
         ENVIRONMENT="staging",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
         SECRET_KEY="b" * 64,
+        QR_SIGNING_KEY="c" * 64,
+        REDIS_URL="redis://127.0.0.1:6379/0",
         CORS_ORIGINS=["https://staging.rvfitness.in"],
     )
     validate_production_security(valid_staging)
     assert valid_staging.is_cookie_secure() is True
+
+
+def test_get_qr_signing_key_lifecycle_and_fallback():
+    """Verify get_qr_signing_key enforces independence in prod/staging and safe fallback in dev/test."""
+    # Production / Staging requires independent key
+    prod_valid = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
+        SECRET_KEY="s" * 64,
+        QR_SIGNING_KEY="q" * 64,
+    )
+    assert prod_valid.get_qr_signing_key() == "q" * 64
+
+    # Production / Staging rejects missing QR key on getter
+    prod_missing = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_prod",
+        SECRET_KEY="s" * 64,
+        QR_SIGNING_KEY=None,
+    )
+    with pytest.raises(ValueError, match="cannot fall back to SECRET_KEY"):
+        prod_missing.get_qr_signing_key()
+
+    # Production / Staging rejects identical key on getter
+    prod_identical = Settings(
+        ENVIRONMENT="staging",
+        DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
+        SECRET_KEY="same_key_" + "x" * 55,
+        QR_SIGNING_KEY="same_key_" + "x" * 55,
+    )
+    with pytest.raises(ValueError, match="distinct and independent from SECRET_KEY"):
+        prod_identical.get_qr_signing_key()
+
+    # Development / Test safely falls back to SECRET_KEY
+    dev_settings = Settings(
+        ENVIRONMENT="development",
+        SECRET_KEY="dev_secret_key_value",
+        QR_SIGNING_KEY=None,
+    )
+    assert dev_settings.get_qr_signing_key() == "dev_secret_key_value"
+
+    test_settings = Settings(
+        ENVIRONMENT="test",
+        SECRET_KEY="test_secret_key_value",
+        QR_SIGNING_KEY=None,
+    )
+    assert test_settings.get_qr_signing_key() == "test_secret_key_value"
 
 
 def test_csrf_cookie_name_divergence_rejected():
@@ -136,6 +248,7 @@ def test_csrf_cookie_name_divergence_rejected():
         ENVIRONMENT="staging",
         DATABASE_URL="postgresql://user:pass@127.0.0.1:5432/rvfitness_staging",
         SECRET_KEY="c" * 64,
+        QR_SIGNING_KEY="d" * 64,
         CSRF_COOKIE_NAME="custom_csrf_name",
     )
     with pytest.raises(ValueError, match="CSRF_COOKIE_NAME is configured as 'custom_csrf_name'"):

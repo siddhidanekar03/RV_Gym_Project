@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict
 from datetime import date
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from backend.app.core.validation import validate_and_normalize_phone
 
 
 class CheckInResponse(BaseModel):
@@ -20,8 +21,20 @@ class QRTokenResponse(BaseModel):
 
 
 class QRCheckInRequest(BaseModel):
-    qrToken: str
-    branchId: str = "narsobawadi"
+    qrToken: Optional[str] = None
+    qr_token: Optional[str] = None
+    branchId: Optional[str] = None
+    branch_id: Optional[str] = None
+
+    def get_token(self) -> str:
+        tok = self.qrToken or self.qr_token
+        if not tok or not tok.strip():
+            raise ValueError("QR entry token is required.")
+        return tok.strip()
+
+    def get_branch(self) -> str:
+        b = self.branchId or self.branch_id or "narsobawadi"
+        return b.strip()
 
 
 class ManualCheckInRequest(BaseModel):
@@ -31,6 +44,11 @@ class ManualCheckInRequest(BaseModel):
     phone: Optional[str] = None
     name: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        return validate_and_normalize_phone(v, required=False, field_name="phone")
 
 
 class ManagerOverrideRequest(BaseModel):
@@ -61,14 +79,24 @@ class PaperBackfillRequest(BaseModel):
     phone: Optional[str] = None
     name: Optional[str] = None
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        return validate_and_normalize_phone(v, required=False, field_name="phone")
+
 
 class MemberLookupItem(BaseModel):
     id: str
     name: str
+    email: Optional[str] = None
+    branchId: Optional[str] = None
+    branchName: Optional[str] = None
     membershipId: str
     maskedPhone: str
+    phone: Optional[str] = None
     status: str
     validUntil: str
+    planId: Optional[str] = None
     planName: str
     isEligible: bool
     ineligibilityReason: Optional[str] = None

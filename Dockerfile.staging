@@ -40,7 +40,10 @@ COPY scripts /app/scripts
 COPY --from=frontend-builder /build/dist /app/frontend/dist
 
 # Create persistent storage mount directory for user and announcement media
-RUN mkdir -p /app/backend/app/uploads/announcements
+RUN mkdir -p /app/uploads/announcements && chmod -R 775 /app/uploads
+
+# Declare persistent volume mount point
+VOLUME ["/app/uploads"]
 
 # Expose API and static serving port
 EXPOSE 8000
@@ -48,6 +51,7 @@ EXPOSE 8000
 # Set Python environment
 ENV PYTHONPATH=/app
 ENV ENVIRONMENT=staging
+ENV UPLOADS_DIR=/app/uploads
 
 # Launch single-worker Uvicorn process for process-local rate limiting safety
 CMD ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

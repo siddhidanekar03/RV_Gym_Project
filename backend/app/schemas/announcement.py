@@ -19,6 +19,29 @@ VALID_STATUSES = {"draft", "published", "archived"}
 VALID_AUDIENCES = {"public", "members_only", "staff_only"}
 
 
+def validate_safe_image_url(v: Optional[str]) -> Optional[str]:
+    """Validate that image_url is a safe absolute HTTP/HTTPS URL or /uploads/ path without traversal."""
+    if v is None:
+        return None
+    v_clean = str(v).strip()
+    if not v_clean:
+        return None
+    lower_v = v_clean.lower()
+    # Disallow unsafe URI schemes
+    if lower_v.startswith(("javascript:", "data:", "vbscript:", "file:")):
+        raise ValueError("Unsafe image URL protocol provided.")
+    # Reject path traversal patterns and null bytes
+    if ".." in lower_v or "\\" in lower_v or "%2e" in lower_v or "\0" in v_clean:
+        raise ValueError("Path traversal sequences are strictly forbidden in image_url.")
+    # Allow relative paths starting with /uploads/ or absolute http/https URLs
+    if lower_v.startswith("/"):
+        if not lower_v.startswith("/uploads/"):
+            raise ValueError("Relative image URLs must start with '/uploads/'.")
+    elif not (lower_v.startswith("http://") or lower_v.startswith("https://")):
+        raise ValueError("image_url must be an absolute HTTP/HTTPS URL or safe relative /uploads path.")
+    return v_clean
+
+
 class AnnouncementBase(BaseModel):
     """Core announcement schema with comprehensive field-level validation."""
 
@@ -71,19 +94,7 @@ class AnnouncementBase(BaseModel):
     @field_validator("image_url")
     @classmethod
     def validate_image_url(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        v_clean = v.strip()
-        if not v_clean:
-            return None
-        # Disallow unsafe URI schemes
-        lower_v = v_clean.lower()
-        if lower_v.startswith(("javascript:", "data:", "vbscript:", "file:")):
-            raise ValueError("Unsafe image URL protocol provided.")
-        # Allow relative paths like /uploads/... or http/https URLs
-        if not (lower_v.startswith("http://") or lower_v.startswith("https://") or lower_v.startswith("/")):
-            raise ValueError("image_url must be an absolute HTTP/HTTPS URL or safe relative /uploads path.")
-        return v_clean
+        return validate_safe_image_url(v)
 
     @model_validator(mode="after")
     def validate_dates_and_scope(self) -> "AnnouncementBase":
@@ -180,17 +191,7 @@ class AnnouncementUpdate(BaseModel):
     @field_validator("image_url")
     @classmethod
     def validate_image_url(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        v_clean = v.strip()
-        if not v_clean:
-            return None
-        lower_v = v_clean.lower()
-        if lower_v.startswith(("javascript:", "data:", "vbscript:", "file:")):
-            raise ValueError("Unsafe image URL protocol provided.")
-        if not (lower_v.startswith("http://") or lower_v.startswith("https://") or lower_v.startswith("/")):
-            raise ValueError("image_url must be an absolute HTTP/HTTPS URL or safe relative /uploads path.")
-        return v_clean
+        return validate_safe_image_url(v)
 
 
 class AnnouncementPublishRequest(BaseModel):

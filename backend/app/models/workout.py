@@ -158,6 +158,8 @@ class WorkoutSession(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(30), default="in_progress", nullable=False, index=True)
     session_name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rpe: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Rate of Perceived Exertion (1-10)
 
     # Coach verification
     is_coach_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -173,6 +175,11 @@ class WorkoutSession(Base, TimestampMixin):
     completed_exercises: Mapped[List["WorkoutSessionExercise"]] = relationship(
         "WorkoutSessionExercise", back_populates="session", cascade="all, delete-orphan", order_by="WorkoutSessionExercise.exercise_order"
     )
+
+    @property
+    def exercises(self) -> List["WorkoutSessionExercise"]:
+        """Alias returning completed_exercises for schema serialization."""
+        return self.completed_exercises
 
 
 class WorkoutSessionExercise(Base):

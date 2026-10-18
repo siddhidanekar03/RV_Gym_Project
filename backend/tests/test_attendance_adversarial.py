@@ -34,6 +34,9 @@ from backend.app.services.attendance_service import (
 from backend.app.services.billing_service import record_offline_payment, reverse_payment
 from backend.app.cli.prune_nonces import run_prune_nonces, RVF_QR_CLEANUP_ADVISORY_LOCK_ID
 
+# Deterministic test-only wrong key with >= 32 bytes (256 bits) to satisfy PyJWT / RFC 7518
+TEST_ADVERSARIAL_FORGED_HMAC_KEY = "rvf_test_deterministic_adversarial_wrong_hmac_key_32b"
+
 
 @pytest.fixture
 def adversarial_setup(db_session: Session):
@@ -369,7 +372,8 @@ def test_forged_and_expired_qr_tokens(adversarial_setup, db_session: Session):
         "token_type": "rvf_entry_qr",
         "exp": int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()),
     }
-    forged_token = jwt.encode(tampered_payload, "COMPLETELY_WRONG_SECRET", algorithm="HS256")
+    assert len(TEST_ADVERSARIAL_FORGED_HMAC_KEY.encode("utf-8")) >= 32
+    forged_token = jwt.encode(tampered_payload, TEST_ADVERSARIAL_FORGED_HMAC_KEY, algorithm="HS256")
     with pytest.raises(ValueError, match="Invalid QR code scanned"):
         process_qr_checkin(db=db_session, qr_token=forged_token, branch_id="narsobawadi")
 

@@ -229,12 +229,14 @@ def process_qr_checkin(
     expiration, single-use nonce consumption, shared eligibility,
     and daily branch attendance uniqueness.
     """
-    branch_today = get_branch_local_date(branch_id)
+    clean_token = (qr_token or "").strip().strip('"').strip("'")
+    target_branch = branch_id if branch_id and branch_id.strip() and branch_id.strip() != "all" else (staff.branch_id if staff and staff.branch_id else "narsobawadi")
+    branch_today = get_branch_local_date(target_branch)
 
     # 1. Decode and verify JWT signature
     try:
         payload = jwt.decode(
-            qr_token,
+            clean_token,
             settings.get_qr_signing_key(),
             algorithms=["HS256"],
             options={"require": ["exp", "iat", "sub", "jti"]},
@@ -1113,13 +1115,18 @@ def lookup_members_for_desk(
         results.append({
             "id": u.id,
             "name": u.name,
+            "email": u.email,
+            "branchId": u.branch_id,
+            "branchName": u.branch.name if u.branch else "Narsobawadi Main Campus",
             "membershipId": u.membership_id or "Pending ID",
             "membership_id": u.membership_id or "Pending ID",
             "maskedPhone": mask_phone(u.phone),
             "phone_masked": mask_phone(u.phone),
+            "phone": u.phone,
             "status": u.membership_status,
             "validUntil": u.valid_until.strftime("%B %d, %Y") if u.valid_until else "Pending",
-            "planName": u.membership_plan.name if u.membership_plan else "General Tier",
+            "planId": u.membership_plan_id,
+            "planName": u.membership_plan.name if u.membership_plan else "No Plan Assigned",
             "isEligible": eligible,
             "is_eligible": eligible,
             "ineligibilityReason": message if not eligible else None,

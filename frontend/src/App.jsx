@@ -30,6 +30,7 @@ export default function App() {
     }
   });
 
+  const [authResolved, setAuthResolved] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [legalModalType, setLegalModalType] = useState(null); // 'privacy' | 'terms' | null
@@ -63,7 +64,22 @@ export default function App() {
       .catch(() => {
         setCurrentUser(null);
         localStorage.removeItem('rvf_user');
+      })
+      .finally(() => {
+        setAuthResolved(true);
       });
+  }, []);
+
+  // Handle session expiration cleanly across entire application
+  useEffect(() => {
+    const handleExpired = () => {
+      setCurrentUser(null);
+      localStorage.removeItem('rvf_user');
+      setShowPortal(false);
+      setShowAuthModal(true);
+    };
+    window.addEventListener('rvf:auth_expired', handleExpired);
+    return () => window.removeEventListener('rvf:auth_expired', handleExpired);
   }, []);
 
   // Handle URL hash changes
@@ -130,22 +146,40 @@ export default function App() {
       />
 
       {/* Authenticated Dashboard / Management Portal View */}
-      {showPortal && currentUser ? (
-        ['admin', 'org_admin', 'branch_manager', 'front_desk', 'staff'].includes(currentUser.role) ? (
-          <AdminDashboard
-            user={currentUser}
-            onClose={() => setShowPortal(false)}
-          />
+      {showPortal ? (
+        !authResolved ? (
+          <div className="status-container" style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="spinner-icon gold-text" style={{ width: 40, height: 40, border: '3px solid #d4af37', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <p style={{ marginTop: 16, color: '#e0e0e0' }}>Verifying authenticated session...</p>
+          </div>
+        ) : currentUser ? (
+          ['admin', 'org_admin', 'branch_manager', 'front_desk', 'staff'].includes(currentUser.role) ? (
+            <AdminDashboard
+              user={currentUser}
+              onClose={() => setShowPortal(false)}
+            />
+          ) : (
+            <MemberDashboard
+              user={currentUser}
+              onUserUpdate={(updatedUser) => {
+                setCurrentUser(updatedUser);
+                localStorage.setItem('rvf_user', JSON.stringify(updatedUser));
+              }}
+              onClose={() => setShowPortal(false)}
+            />
+          )
         ) : (
-          <MemberDashboard
-            user={currentUser}
-            token={token}
-            onUserUpdate={(updatedUser) => {
-              setCurrentUser(updatedUser);
-              localStorage.setItem('rvf_user', JSON.stringify(updatedUser));
-            }}
-            onClose={() => setShowPortal(false)}
-          />
+          <div className="status-container" style={{ minHeight: '60vh', textAlign: 'center', padding: '60px 20px' }}>
+            <h3 style={{ color: '#d4af37', marginBottom: 12 }}>Authentication Required</h3>
+            <p style={{ color: '#aaa', marginBottom: 20 }}>Please sign in to access your portal desk.</p>
+            <button
+              type="button"
+              className="btn-gold-large"
+              onClick={() => setShowAuthModal(true)}
+            >
+              Sign In to RVFitness
+            </button>
+          </div>
         )
       ) : (
         <>
@@ -196,6 +230,18 @@ export default function App() {
       {selectedPlan && (
         <EnrollModal
           plan={selectedPlan}
+          currentUser={currentUser}
+          onSuccess={async () => {
+            try {
+              const data = await fetchCurrentUser();
+              if (data && data.user) {
+                setCurrentUser(data.user);
+                localStorage.setItem('rvf_user', JSON.stringify(data.user));
+              }
+            } catch {
+              // Ignore failure to refresh session
+            }
+          }}
           onClose={() => setSelectedPlan(null)}
           onOpenPrivacy={() => setLegalModalType('privacy')}
           onOpenTerms={() => setLegalModalType('terms')}

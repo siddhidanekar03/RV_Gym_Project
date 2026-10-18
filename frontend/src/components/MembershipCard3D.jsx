@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { ShieldCheck, Wifi, QrCode } from 'lucide-react';
 
-export default function MembershipCard3D({ member }) {
+export default function MembershipCard3D({ member, onOpenQR }) {
   const [rotate, setRotate] = useState({ x: 0, y: 0 });
   const [glare, setGlare] = useState({ x: 50, y: 50, opacity: 0 });
   const [is3DActive, setIs3DActive] = useState(true);
@@ -117,7 +117,19 @@ export default function MembershipCard3D({ member }) {
                   <span key={i} style={{ width: `${w}px` }} />
                 ))}
               </div>
-              <div className="qr-badge" title="Scan at Front Gate">
+              <div
+                className={`qr-badge ${onOpenQR ? 'clickable' : ''}`}
+                title={onOpenQR ? "Click to open Entry QR Pass" : "Scan at Front Gate"}
+                onClick={onOpenQR}
+                role={onOpenQR ? "button" : undefined}
+                tabIndex={onOpenQR ? 0 : undefined}
+                onKeyDown={(e) => {
+                  if (onOpenQR && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onOpenQR();
+                  }
+                }}
+              >
                 <QrCode size={24} />
               </div>
             </div>

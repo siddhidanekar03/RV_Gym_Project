@@ -21,6 +21,28 @@ async def lifespan(app: FastAPI):
     validate_production_security(settings)
     logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION} [{settings.ENVIRONMENT}]")
     logger.info(f"Database dialect configured: {settings.DATABASE_URL.split('://')[0]}")
+
+    from backend.app.core.rate_limit import limiter
+
+    if limiter.backend_name == "redis":
+        if not limiter.is_healthy():
+            if settings.ENVIRONMENT in {"staging", "production"}:
+                raise ConnectionError(
+                    f"CRITICAL: Redis rate limiter healthcheck failed on startup ({settings.get_sanitized_redis_url()}). "
+                    "In staging/production, Redis must be operational to support distributed rate limiting."
+                )
+            else:
+                logger.warning("Redis rate limiter healthcheck failed on startup; running with in-memory fallback.")
+        else:
+            logger.info("Distributed Redis rate limiter connected and operational.")
+    else:
+        if settings.ENVIRONMENT in {"staging", "production"}:
+            raise RuntimeError(
+                f"CRITICAL: In {settings.ENVIRONMENT}, in-memory rate limiting is forbidden. "
+                "Redis distributed rate limiting must be configured and healthy."
+            )
+        logger.info("In-memory rate limiter initialized.")
+
     yield
     logger.info(f"Shutting down {settings.PROJECT_NAME} and releasing connection pools...")
     try:
@@ -29,6 +51,12 @@ async def lifespan(app: FastAPI):
         logger.info("Database connection pool disposed cleanly.")
     except Exception as e:
         logger.error(f"Error during database engine disposal: {e}")
+
+    try:
+        limiter.close()
+        logger.info("Rate limiter resources closed cleanly.")
+    except Exception as e:
+        logger.error(f"Error during rate limiter resource disposal: {e}")
 
 
 app = FastAPI(
@@ -110,16 +138,22 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = []
+    field_errors = {}
     for err in exc.errors():
+        loc_parts = [str(l) for l in err.get("loc", []) if l != "body"]
+        field_name = loc_parts[-1] if loc_parts else "request"
         loc = " -> ".join(str(l) for l in err.get("loc", []))
         msg = err.get("msg", "Validation error")
         errors.append(f"{loc}: {msg}")
+        field_errors[field_name] = msg
     logger.warning(f"Validation error on {request.method} {request.url.path}: {errors}")
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={
             "error": "Request validation failed",
+            "message": "; ".join(errors),
             "details": errors,
+            "field_errors": field_errors,
             "status_code": 422,
         },
     )
@@ -140,8 +174,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # Mount Root Probes for Load Balancers and Container Orchestrators
 app.include_router(health_router, include_in_schema=False)
 
-# Mount API Router
+# Mount API Router (supports both /api and /api/v1 prefixes)
 app.include_router(api_router, prefix=settings.API_V1_STR)
+if settings.API_V1_STR != "/api/v1":
+    app.include_router(api_router, prefix="/api/v1")
 
 # Static frontend distribution serving (standalone staging / production container mode)
 frontend_dist_dir = os.path.join(
@@ -159,6 +195,8 @@ if os.path.isdir(frontend_dist_dir):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa_frontend(full_path: str):
         if full_path.startswith(("api", "uploads", "health", "ready", "docs", "redoc", "openapi")):
+            raise StarletteHTTPException(status_code=404, detail="Not Found")
+        if any(part.startswith(".") for part in full_path.split("/")) or full_path.endswith((".env", ".py", ".db", ".key", ".ini", ".conf")):
             raise StarletteHTTPException(status_code=404, detail="Not Found")
         target_file = os.path.join(frontend_dist_dir, full_path)
         if os.path.isfile(target_file):

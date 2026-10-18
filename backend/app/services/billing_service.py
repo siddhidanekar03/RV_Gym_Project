@@ -170,6 +170,9 @@ def record_offline_payment(
 
     if invoice.balance_due == Decimal("0.00"):
         invoice.status = "paid"
+        if invoice.enrollment_id:
+            from backend.app.services.membership_service import activate_enrollment_from_paid_invoice
+            activate_enrollment_from_paid_invoice(db, invoice)
     else:
         invoice.status = "partially_paid"
 

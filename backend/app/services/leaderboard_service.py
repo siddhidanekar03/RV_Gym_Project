@@ -407,7 +407,7 @@ def record_admin_point_adjustment(
 
     if not reason or not reason.strip():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A documented reason is mandatory for administrative score adjustments.",
         )
 
@@ -638,12 +638,12 @@ def update_member_preferences(
         clean_alias = alias.strip()
         if len(clean_alias) < 3 or len(clean_alias) > 30:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Alias must be between 3 and 30 characters in length.",
             )
         if not re.match(r"^[A-Za-z0-9_-]+$", clean_alias):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Alias may only contain alphanumeric characters, underscores, and hyphens.",
             )
 

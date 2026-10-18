@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Lock, Mail, User, Phone, AlertCircle } from 'lucide-react';
 import { loginUser, registerUser } from '../api';
+import { validatePhoneNumber } from '../utils/phoneValidation';
 
 export default function AuthModal({
   onClose,
@@ -20,10 +21,12 @@ export default function AuthModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError(null);
+    setFieldErrors({});
     if (!loginEmail || !loginPassword) {
       setError('Please provide both email and password.');
       return;
@@ -44,37 +47,51 @@ export default function AuthModal({
   const handleRegister = async (e) => {
     e.preventDefault();
     setError(null);
+    setFieldErrors({});
 
-    if (!regAcceptedTerms) {
-      setError('You must accept the Terms & Conditions and Privacy Policy to register.');
-      return;
-    }
+    const clientErrors = {};
     if (!regName.trim() || regName.trim().length < 2) {
-      setError('Please enter your full name.');
-      return;
+      clientErrors.name = 'Full name must be at least 2 characters.';
     }
-    if (!regEmail || !regEmail.includes('@')) {
-      setError('Please enter a valid email address.');
-      return;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!regEmail || !emailRegex.test(regEmail.trim())) {
+      clientErrors.email = 'Please enter a valid email address (e.g., name@domain.com).';
     }
-    if (!regPassword || regPassword.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (!regPassword || regPassword.length < 8) {
+      clientErrors.password = 'Password must be at least 8 characters long.';
+    }
+    if (regPhone && regPhone.trim().length > 0) {
+      const phoneErr = validatePhoneNumber(regPhone, false);
+      if (phoneErr) {
+        clientErrors.phone = phoneErr;
+      }
+    }
+    if (!regAcceptedTerms) {
+      clientErrors.acceptedTerms = 'You must accept the Terms & Conditions and Privacy Policy.';
+    }
+
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
+      setError(Object.values(clientErrors)[0]);
       return;
     }
 
     setSubmitting(true);
     try {
       const data = await registerUser({
-        name: regName,
-        email: regEmail,
-        phone: regPhone,
+        name: regName.trim(),
+        email: regEmail.trim().toLowerCase(),
+        phone: regPhone.trim() || null,
         password: regPassword,
         acceptedTerms: regAcceptedTerms
       });
       onLoginSuccess(data.token, data.user);
       onClose();
     } catch (err) {
-      setError(err.message || 'Registration failed. Please try again.');
+      if (err.fieldErrors && Object.keys(err.fieldErrors).length > 0) {
+        setFieldErrors(err.fieldErrors);
+      }
+      setError(err.message || 'Registration failed. Please check the entered fields.');
     } finally {
       setSubmitting(false);
     }
@@ -224,11 +241,15 @@ export default function AuthModal({
                   type="text"
                   required
                   placeholder="Enter full name"
-                  className="form-input has-icon"
+                  className={`form-input has-icon ${fieldErrors.name ? 'input-error' : ''}`}
                   value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
+                  onChange={(e) => {
+                    setRegName(e.target.value);
+                    if (fieldErrors.name) setFieldErrors({ ...fieldErrors, name: null });
+                  }}
                 />
               </div>
+              {fieldErrors.name && <span className="field-error-text">{fieldErrors.name}</span>}
             </div>
 
             <div className="form-group">
@@ -242,11 +263,15 @@ export default function AuthModal({
                   type="email"
                   required
                   placeholder="yourname@domain.com"
-                  className="form-input has-icon"
+                  className={`form-input has-icon ${fieldErrors.email ? 'input-error' : ''}`}
                   value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
+                  onChange={(e) => {
+                    setRegEmail(e.target.value);
+                    if (fieldErrors.email) setFieldErrors({ ...fieldErrors, email: null });
+                  }}
                 />
               </div>
+              {fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}
             </div>
 
             <div className="form-group">
@@ -259,16 +284,20 @@ export default function AuthModal({
                   id="reg-phone"
                   type="tel"
                   placeholder="+91 98000 00000"
-                  className="form-input has-icon"
+                  className={`form-input has-icon ${fieldErrors.phone ? 'input-error' : ''}`}
                   value={regPhone}
-                  onChange={(e) => setRegPhone(e.target.value)}
+                  onChange={(e) => {
+                    setRegPhone(e.target.value);
+                    if (fieldErrors.phone) setFieldErrors({ ...fieldErrors, phone: null });
+                  }}
                 />
               </div>
+              {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}
             </div>
 
             <div className="form-group">
               <label htmlFor="reg-pass" className="form-label">
-                Create Password (Min 6 chars) <span className="required-star">*</span>
+                Create Secure Password (Min 8 chars) <span className="required-star">*</span>
               </label>
               <div className="input-with-icon">
                 <Lock size={16} className="input-icon" />
@@ -277,11 +306,15 @@ export default function AuthModal({
                   type="password"
                   required
                   placeholder="••••••••"
-                  className="form-input has-icon"
+                  className={`form-input has-icon ${fieldErrors.password ? 'input-error' : ''}`}
                   value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
+                  onChange={(e) => {
+                    setRegPassword(e.target.value);
+                    if (fieldErrors.password) setFieldErrors({ ...fieldErrors, password: null });
+                  }}
                 />
               </div>
+              {fieldErrors.password && <span className="field-error-text">{fieldErrors.password}</span>}
             </div>
 
             <div className="terms-checkbox-wrap">
@@ -289,7 +322,10 @@ export default function AuthModal({
                 <input
                   type="checkbox"
                   checked={regAcceptedTerms}
-                  onChange={(e) => setRegAcceptedTerms(e.target.checked)}
+                  onChange={(e) => {
+                    setRegAcceptedTerms(e.target.checked);
+                    if (fieldErrors.acceptedTerms) setFieldErrors({ ...fieldErrors, acceptedTerms: null });
+                  }}
                 />
                 <span className="checkbox-label-text">
                   I accept the{' '}
@@ -316,6 +352,9 @@ export default function AuthModal({
                   </button>.
                 </span>
               </label>
+              {fieldErrors.acceptedTerms && (
+                <div className="field-error-text mt-1">{fieldErrors.acceptedTerms}</div>
+              )}
             </div>
 
             <button

@@ -1,3 +1,6 @@
+# RVFitness Disposable Local Test Database Container
+# WARNING: The static credentials below are strictly disposable local-test fixtures.
+# They are never used in staging or production, and must never be deployed.
 services:
   postgres-test:
     image: postgres:16-alpine
@@ -13,3 +16,4 @@ services:
       interval: 3s
       timeout: 3s
       retries: 5
+

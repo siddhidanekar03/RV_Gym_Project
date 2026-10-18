@@ -20,13 +20,15 @@ import {
   Lock,
   Unlock,
   Award,
-  Plus
+  Plus,
+  TrendingUp
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import MembershipCard3D from './MembershipCard3D';
 import MemberQRModal from './MemberQRModal';
+import MemberProfileView from './MemberProfileView';
+import FitnessPerformanceTracker from './FitnessPerformanceTracker';
 import {
-  memberCheckIn,
   fetchUserFeedAnnouncements,
   fetchMyLeaderboardStanding,
   updateLeaderboardPreferences,
@@ -37,6 +39,8 @@ import {
   fetchWorkoutSessions,
   recordFitnessProgress,
   fetchFitnessProgress,
+  fetchMyEnrollment,
+  fetchCurrentUser,
 } from '../api';
 
 export default function MemberDashboard({
@@ -45,7 +49,7 @@ export default function MemberDashboard({
   onUserUpdate,
   onClose
 }) {
-  const [checkingIn, setCheckingIn] = useState(false);
+  const [dashboardSection, setDashboardSection] = useState('access'); // 'access' | 'profile' | 'performance'
   const [showQRModal, setShowQRModal] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [error, setError] = useState(null);
@@ -83,8 +87,30 @@ export default function MemberDashboard({
     is_private: true,
   });
 
+  // Latest Membership Enrollment application state
+  const [myEnrollment, setMyEnrollment] = useState(null);
+
   useEffect(() => {
     let ignore = false;
+
+    // Refresh current user data to ensure latest plan and activation status
+    fetchCurrentUser()
+      .then((res) => {
+        if (!ignore && res && res.user && onUserUpdate) {
+          onUserUpdate(res.user);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch member's latest enrollment record
+    fetchMyEnrollment()
+      .then((res) => {
+        if (!ignore && res && res.enrollment) {
+          setMyEnrollment(res.enrollment);
+        }
+      })
+      .catch(() => {});
+
     fetchUserFeedAnnouncements()
       .then((res) => {
         if (!ignore) setNotices(res.announcements || []);
@@ -222,57 +248,6 @@ export default function MemberDashboard({
     }
   };
 
-  const handleCheckIn = async () => {
-    if (user.todayCheckedIn) return;
-    setCheckingIn(true);
-    setError(null);
-    setFeedback(null);
-
-    try {
-      const data = await memberCheckIn(token);
-      setFeedback(data.message);
-      // Trigger subtle celebration
-      confetti({
-        particleCount: 50,
-        spread: 60,
-        origin: { y: 0.8 },
-        colors: ['#d4af37', '#f8fafc', '#b89325']
-      });
-
-      // Update parent user state
-      onUserUpdate({
-        ...user,
-        todayCheckedIn: true,
-        streakDays: data.streakDays,
-        attendanceThisMonth: data.attendanceThisMonth
-      });
-
-      // Refresh points and standing
-      fetchMyLeaderboardStanding()
-        .then((s) => {
-          setStanding({
-            points: s.points || 0,
-            distinctDays: s.distinctDays || 0,
-            rank: s.rank,
-            totalMembers: s.totalMembers || 0,
-            alias: s.alias || '',
-            isLeaderboardVisible: s.isLeaderboardVisible,
-            tier: s.tier || 'Bronze',
-          });
-        })
-        .catch(() => {});
-      fetchMyPointHistory()
-        .then((h) => {
-          if (h.entries) setRecentLedger(h.entries.slice(0, 5));
-        })
-        .catch(() => {});
-    } catch (err) {
-      setError(err.message || 'Check-in failed');
-    } finally {
-      setCheckingIn(false);
-    }
-  };
-
   const handleSaveAlias = async (e) => {
     e.preventDefault();
     if (!aliasInput || aliasInput.trim().length < 3) {
@@ -339,6 +314,31 @@ export default function MemberDashboard({
           <h2 className="dashboard-title">Member Training Portal</h2>
         </div>
 
+        {/* Portal Section Navigation Tabs */}
+        <div className="dashboard-portal-nav">
+          <button
+            type="button"
+            className={`portal-nav-btn ${dashboardSection === 'access' ? 'active' : ''}`}
+            onClick={() => setDashboardSection('access')}
+          >
+            <QrCode size={15} /> Keycard & Routine
+          </button>
+          <button
+            type="button"
+            className={`portal-nav-btn ${dashboardSection === 'profile' ? 'active' : ''}`}
+            onClick={() => setDashboardSection('profile')}
+          >
+            <User size={15} /> Health Profile
+          </button>
+          <button
+            type="button"
+            className={`portal-nav-btn ${dashboardSection === 'performance' ? 'active' : ''}`}
+            onClick={() => setDashboardSection('performance')}
+          >
+            <TrendingUp size={15} /> Performance & Progress
+          </button>
+        </div>
+
         <div className="dashboard-user-badge">
           <User size={16} className="gold-text" />
           <span>{user?.name}</span>
@@ -367,10 +367,66 @@ export default function MemberDashboard({
           </div>
         )}
 
-        <div className="dashboard-grid">
+        {dashboardSection === 'access' && (
+          <div className="dashboard-grid">
           {/* Left Column: 3D Digital Card & Fast Check-In */}
           <div className="dashboard-col left-col">
-            <MembershipCard3D member={user} />
+            {/* Membership Application / Activation Status Banner */}
+            {myEnrollment && myEnrollment.status !== 'active' && (
+              <div className={`enrollment-status-card ${myEnrollment.status === 'rejected' ? 'status-rejected' : 'status-pending'}`}>
+                <div className="enrollment-status-header">
+                  <div className="status-badge-title">
+                    {myEnrollment.status === 'pending_verification' || myEnrollment.status === 'Pending Verification at Gym Desk' ? (
+                      <span className="badge-warning">Application Under Review</span>
+                    ) : myEnrollment.status === 'payment_pending' ? (
+                      <span className="badge-gold">Approved: Payment Pending</span>
+                    ) : (
+                      <span className="badge-danger">Application Rejected</span>
+                    )}
+                    <h4 className="enrollment-plan-title">{myEnrollment.planName}</h4>
+                  </div>
+                  <span className="enrollment-ref-tag font-mono">Ref: {myEnrollment.id?.slice(0, 8)}...</span>
+                </div>
+
+                <div className="enrollment-status-body">
+                  <div className="enrollment-details-grid">
+                    <div>
+                      <span className="stat-label">Facility</span>
+                      <strong className="stat-val">{myEnrollment.branchId || 'Narsobawadi'}</strong>
+                    </div>
+                    <div>
+                      <span className="stat-label">Amount Due</span>
+                      <strong className="stat-val gold-text">
+                        ₹{(myEnrollment.balanceDue !== undefined ? myEnrollment.balanceDue : myEnrollment.price)?.toLocaleString('en-IN')}
+                      </strong>
+                    </div>
+                    {myEnrollment.invoiceNumber && (
+                      <div>
+                        <span className="stat-label">Invoice</span>
+                        <strong className="stat-val font-mono">{myEnrollment.invoiceNumber}</strong>
+                      </div>
+                    )}
+                  </div>
+
+                  {myEnrollment.status === 'rejected' ? (
+                    <div className="enrollment-next-steps rejection-note">
+                      <p><strong>Reason:</strong> {myEnrollment.rejectionReason || 'Application details could not be verified.'}</p>
+                      <p>Please contact our reception desk or choose a different membership tier.</p>
+                    </div>
+                  ) : (
+                    <div className="enrollment-next-steps">
+                      <p className="next-steps-instruction">
+                        <strong>Next Step:</strong> {myEnrollment.status === 'payment_pending'
+                          ? 'Your plan application was approved by the gym administrator. Please visit the reception desk at Narsobawadi to complete payment (Cash / UPI / Card POS) to activate your keycard access.'
+                          : 'Your enrollment request is pending administrator review. Please visit the front reception desk at Narsobawadi to complete verification, finalize payment, and receive your personalized RFID keycard.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <MembershipCard3D member={user} onOpenQR={() => setShowQRModal(true)} />
 
             {/* Daily Check-In Widget */}
             <div className="checkin-widget-card">
@@ -395,23 +451,22 @@ export default function MemberDashboard({
                     </div>
                   </div>
                 ) : (
-                  <div className="checkin-buttons-row">
+                  <div className="checkin-secure-flow">
+                    <div className="checkin-instruction-banner" style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px', background: 'rgba(212, 175, 55, 0.08)', border: '1px solid rgba(212, 175, 55, 0.25)', borderRadius: '6px', marginBottom: '14px' }}>
+                      <QrCode size={20} className="gold-text" style={{ flexShrink: 0, marginTop: '2px' }} />
+                      <div style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                        <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '2px' }}>Physical Attendance Required</strong>
+                        <span style={{ color: 'var(--text-secondary)' }}>Remote web check-in has been disabled. Open your dynamic Entry Pass QR code and present it to the gym scanner or reception desk.</span>
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      disabled={checkingIn}
-                      className="btn-checkin-gold"
-                      onClick={handleCheckIn}
-                    >
-                      <Sparkles size={18} />
-                      <span>{checkingIn ? 'Verifying Check-In...' : 'Check In via Web'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-entry-qr"
+                      className="btn-gold-large"
+                      style={{ width: '100%', justifyContent: 'center' }}
                       onClick={() => setShowQRModal(true)}
                     >
                       <QrCode size={18} />
-                      <span>Entry Pass QR</span>
+                      <span>Open Dynamic Entry Pass QR</span>
                     </button>
                   </div>
                 )}
@@ -892,6 +947,20 @@ export default function MemberDashboard({
             </div>
           </div>
         </div>
+        )}
+
+        {dashboardSection === 'profile' && (
+          <MemberProfileView
+            currentUser={user}
+            onUserUpdate={onUserUpdate}
+          />
+        )}
+
+        {dashboardSection === 'performance' && (
+          <FitnessPerformanceTracker
+            currentUser={user}
+          />
+        )}
       </div>
 
       {showQRModal && (

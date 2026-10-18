@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         WorkoutSession,
         FitnessProgressRecord,
     )
+    from backend.app.models.member_profile import MemberProfile, MemberBodyMeasurement
 
 
 class User(Base, TimestampMixin):
@@ -111,6 +112,9 @@ class User(Base, TimestampMixin):
     )
     trainer_profile: Mapped[Optional["TrainerProfile"]] = relationship(
         "TrainerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    profile: Mapped[Optional["MemberProfile"]] = relationship(
+        "MemberProfile", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
     assigned_trainer: Mapped[Optional["User"]] = relationship(
         "User",

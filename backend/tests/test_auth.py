@@ -105,7 +105,7 @@ def test_me_endpoint_and_session_expiry(client: TestClient, db_session: Session)
     csrf_token = login_res.cookies.get(CSRF_COOKIE_NAME)
 
     # 1. Access /api/auth/me
-    me_res = client.get("/api/auth/me", cookies={SESSION_COOKIE_NAME: session_token})
+    me_res = client.get("/api/auth/me")
     assert me_res.status_code == 200
     assert me_res.json()["user"]["email"] == "me_test@rvfitness.in"
 
@@ -115,7 +115,7 @@ def test_me_endpoint_and_session_expiry(client: TestClient, db_session: Session)
     db_session.commit()
 
     # 3. Access with expired session must be rejected with 401
-    expired_res = client.get("/api/auth/me", cookies={SESSION_COOKIE_NAME: session_token})
+    expired_res = client.get("/api/auth/me")
     assert expired_res.status_code == 401
     assert "Session has expired" in expired_res.json()["error"]
 
@@ -141,17 +141,13 @@ def test_logout_and_csrf_enforcement(client: TestClient, db_session: Session):
     csrf_token = login_res.cookies.get(CSRF_COOKIE_NAME)
 
     # 1. Logout without CSRF header must fail with 403
-    no_csrf_res = client.post(
-        "/api/auth/logout",
-        cookies={SESSION_COOKIE_NAME: session_token},
-    )
+    no_csrf_res = client.post("/api/auth/logout")
     assert no_csrf_res.status_code == 403
     assert "CSRF validation failed" in no_csrf_res.json()["error"]
 
     # 2. Logout with wrong CSRF token must fail with 403
     bad_csrf_res = client.post(
         "/api/auth/logout",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: "invalid_csrf_token_value"},
     )
     assert bad_csrf_res.status_code == 403
@@ -159,7 +155,6 @@ def test_logout_and_csrf_enforcement(client: TestClient, db_session: Session):
     # 3. Logout with valid CSRF header succeeds
     logout_res = client.post(
         "/api/auth/logout",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert logout_res.status_code == 200
@@ -169,8 +164,6 @@ def test_logout_and_csrf_enforcement(client: TestClient, db_session: Session):
     assert session_record.is_revoked is True
 
     # 5. Using revoked session must now be rejected
-    subsequent_res = client.get(
-        "/api/auth/me",
-        cookies={SESSION_COOKIE_NAME: session_token},
-    )
+    client.cookies.set(SESSION_COOKIE_NAME, session_token)
+    subsequent_res = client.get("/api/auth/me")
     assert subsequent_res.status_code == 401

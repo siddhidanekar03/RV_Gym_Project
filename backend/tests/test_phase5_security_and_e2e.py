@@ -291,12 +291,14 @@ def test_production_secret_key_validation():
     with pytest.raises(ValueError, match="at least 32 characters"):
         validate_production_security(short_settings)
 
-    # 3. Valid strong 64-character secret key must succeed
+    # 3. Valid strong 64-character secret key and independent QR signing key must succeed
     strong_key = "a" * 64
     valid_settings = Settings(
         ENVIRONMENT="production",
         DATABASE_URL="postgresql://user:pass@db:5432/rvf",
         SECRET_KEY=strong_key,
+        QR_SIGNING_KEY="b" * 64,
+        REDIS_URL="redis://127.0.0.1:6379/0",
     )
     validate_production_security(valid_settings)  # Should not raise
 

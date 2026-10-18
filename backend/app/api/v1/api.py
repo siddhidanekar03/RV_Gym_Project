@@ -14,12 +14,16 @@ from backend.app.api.v1.endpoints import (
     branches,
     announcements,
     workouts,
+    owner,
+    member_profile,
+    performance,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["Health"])
 api_router.include_router(gym_info.router, tags=["Gym Info"])
+api_router.include_router(gym_info.router, prefix="/gym", tags=["Gym Info (Aliased)"])
 api_router.include_router(plans.router, tags=["Memberships"])
 api_router.include_router(auth.router, tags=["Authentication"])
 api_router.include_router(attendance.router, tags=["Attendance"])
@@ -32,3 +36,6 @@ api_router.include_router(trainer.router, tags=["Trainers"])
 api_router.include_router(branches.router, tags=["Branches"])
 api_router.include_router(announcements.router, tags=["Announcements"])
 api_router.include_router(workouts.router, tags=["Workouts"])
+api_router.include_router(owner.router, tags=["Gym Owner Management"])
+api_router.include_router(member_profile.router, tags=["Member Profile"])
+api_router.include_router(performance.router, tags=["Fitness Performance"])

@@ -101,7 +101,12 @@ The backend requires the following environment variables. The application execut
 | `COOKIE_SAMESITE` | string | Yes | SameSite cookie attribute. | `lax` |
 | `SESSION_COOKIE_NAME` | string | Yes | Session cookie name. | `rvf_session` |
 | `CSRF_COOKIE_NAME` | string | Yes | CSRF token cookie name. Must be exactly `rvf_csrf_token`. | `rvf_csrf_token` |
-| `UPLOADS_DIR` | string | No | Directory for persistent uploads storage (defaults to `/app/backend/app/uploads`). | `/var/www/rvfitness/uploads` |
+| `UPLOADS_DIR` | string | No | Directory for persistent uploads storage (defaults to `/app/uploads` in staging container). | `/app/uploads` or `/var/www/rvfitness/uploads` |
+| `RATE_LIMITER_BACKEND` | string | No | Backend selector: `auto`, `redis`, or `memory`. Defaults to `auto`. | In staging/production, must be `redis` (or `auto` with `REDIS_URL`). `memory` is strictly forbidden. |
+| `REDIS_URL` | string | Yes (Staging/Prod) | Redis connection string. Required in staging and production regardless of worker count. | `redis://staging-redis:6379/0` |
+| `REDIS_CONNECT_TIMEOUT` | float | No | Redis connection timeout in seconds. | `2.0` |
+| `REDIS_SOCKET_TIMEOUT` | float | No | Redis socket operation timeout in seconds. | `2.0` |
+| `WORKERS_COUNT` | int | No | Number of active application worker processes per container. | `1` (or `2`-`4` for high concurrency) |
 | `EXPECTED_STAGING_DB_NAME` | string | No | Staging database name expected by pre-migration safety tool. | `rvfitness_staging` |
 | `EXPECTED_STAGING_USER` | string | No | Staging database user expected by pre-migration safety tool. | `rvf_migrator` |
 | `APPROVED_STAGING_HOSTS` | string | No | Comma-separated list of approved staging database hostnames or IPs. | `staging-db.internal,10.0.1.5` |
@@ -114,6 +119,14 @@ The backend requires the following environment variables. The application execut
 ### 3.1 Frontend and Backend CSRF Synchronization
 The frontend API client ([frontend/src/services/api.ts](file:///d:/RV_Gym_Project/frontend/src/services/api.ts)) and cookie helper ([frontend/src/utils/cookies.ts](file:///d:/RV_Gym_Project/frontend/src/utils/cookies.ts)) read the CSRF token from the `rvf_csrf_token` cookie and submit it via the `X-CSRF-Token` request header on state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`).
 To prevent silent divergence where the frontend and backend look for different cookie names, [backend/app/core/config.py](file:///d:/RV_Gym_Project/backend/app/core/config.py) validates in `validate_production_security()` that `settings.CSRF_COOKIE_NAME == "rvf_csrf_token"`. Startup fails closed if the cookie name is altered or mismatched.
+
+### 3.2 Distributed Rate Limiting and Worker Concurrency
+In production and staging, distributed rate limiting via Redis is required unconditionally, regardless of worker count (`WORKERS_COUNT`):
+1. `RATE_LIMITER_BACKEND` must be set to `redis` (or `auto` with `REDIS_URL` configured). Setting `RATE_LIMITER_BACKEND=memory` in staging or production is strictly forbidden and rejected at startup.
+2. `REDIS_URL` connects to a private Redis service or managed instance. A ping healthcheck is verified during startup; unreachable Redis terminates boot immediately (fail-fast).
+3. Requests execute an atomic Lua script managing sorted sets with millisecond precision and bounded key TTL (`math.ceil(window) + 2`).
+4. In `staging` and `production`, connection failure to Redis triggers a fail-closed response (HTTP 503 Service Unavailable with `Retry-After: 5`) to prevent unthrottled brute-force exposure during infrastructure degradation.
+5. In `development` and `test`, connection failure automatically logs a warning and falls back to thread-safe in-memory rate limiting.
 
 ---
 
@@ -253,9 +266,28 @@ cd ..
 ```
 
 ### Step 2: Database Backup
-Always trigger a pre-deployment PostgreSQL snapshot or logical backup before applying migrations:
+Always trigger a pre-deployment PostgreSQL logical backup before applying migrations or updating container code:
 ```bash
-pg_dump -U rvf_migrator -h <db_host> -d rvfitness -F c -f "/backup/pre_deploy_$(date +%Y%m%d_%H%M%S).dump"
+# Execute safe backup and automated restore verification tool:
+python scripts/backup_and_restore.py --backup-root "E:\RVFitnessBackup" --container rvfitness-smoke-db --user rvfitness_smoke --db rvfitness_smoke
+```
+
+This automated tool executes the following guarantees:
+1. Validates live database identity (`SELECT current_database(), current_user, version()`).
+2. Creates an isolated timestamped directory: `E:\RVFitnessBackup\RVFitness\YYYY-MM-DD_HH-mm-ss\`.
+3. Non-destructively exports plain SQL (`.sql`) and compressed custom archive (`.dump`) dumps.
+4. Generates cryptographic SHA-256 checksums in `SHA256SUMS`.
+5. Emits structured JSON metadata in `backup_manifest.json` with zero credentials or secrets.
+6. Automatically spins up an ephemeral disposable test container, restores the dump, verifies the 30 application tables and Alembic revision 007 (`007_workout_plans_and_progress`), runs smoke queries, and cleanly destroys the disposable container.
+7. Logs all actions in `backup.log` and `restore_verification.log` with credential masking.
+
+#### Checksum Verification on Host:
+```powershell
+# Verify backup integrity using PowerShell:
+Get-FileHash E:\RVFitnessBackup\RVFitness\<timestamp>\*.* -Algorithm SHA256
+
+# Or using Linux sha256sum:
+cd /mnt/e/RVFitnessBackup/RVFitness/<timestamp> && sha256sum -c SHA256SUMS
 ```
 
 #### Step 3: Pre-Migration Target Verification and Database Migrations
@@ -346,17 +378,72 @@ python -m alembic -c backend/alembic.ini downgrade -1
 ```
 
 ### 6.4 Full Database Restoration from Pre-Deployment Dump
-If data corruption occurred:
+If data corruption occurred or a deployment rollback requires database restoration:
+
+#### Step 1: Pre-Restoration Safety Check
+Never restore directly over active production or staging databases without verifying the dump artifact first in an isolated disposable container:
 ```bash
-# 1. Terminate active backend workers to release connections
+# Verify dump in an isolated test database:
+python scripts/backup_and_restore.py --backup-root "E:\RVFitnessBackup" --action all
+```
+
+#### Step 2: Restore to an Isolated Test Database
+To manually test a specific dump file into an isolated PostgreSQL instance without touching production:
+```bash
+# 1. Spawn disposable test container:
+docker run -d --name rvfitness_manual_restore_verify \
+  -e POSTGRES_DB=rvfitness_restore_manual \
+  -e POSTGRES_USER=rvf_restore_test \
+  -e POSTGRES_PASSWORD=disposableFixturePassword123 \
+  postgres:16-alpine
+
+# 2. Copy backup artifact to container:
+docker cp "E:\RVFitnessBackup\RVFitness\<timestamp>\rvfitness_rvfitness_smoke.sql" rvfitness_manual_restore_verify:/tmp/restore.sql
+
+# 3. Execute restoration:
+docker exec rvfitness_manual_restore_verify psql -U rvf_restore_test -d rvfitness_restore_manual -f /tmp/restore.sql
+
+# 4. Verify table count and migration version:
+docker exec rvfitness_manual_restore_verify psql -U rvf_restore_test -d rvfitness_restore_manual -c \
+  "SELECT current_database(), current_user; SELECT version_num FROM alembic_version; SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
+
+# 5. Clean up temporary test container:
+docker stop rvfitness_manual_restore_verify && docker rm rvfitness_manual_restore_verify
+```
+
+#### Step 3: Production Rollback Restoration (Disaster Recovery Only)
+When restoring to the live database is approved and necessary:
+```bash
+# 1. Terminate active backend workers to release connections:
 sudo systemctl stop rvfitness-backend
 
-# 2. Restore database from pre-deployment snapshot
-pg_restore -U rvf_migrator -h <db_host> -d rvfitness --clean --if-exists /backup/pre_deploy_<timestamp>.dump
+# 2. Restore database from pre-deployment snapshot:
+pg_restore -U rvf_migrator -h <db_host> -d rvfitness --clean --if-exists "E:\RVFitnessBackup\RVFitness\<timestamp>\rvfitness_rvfitness_smoke.dump"
 
-# 3. Restart backend workers
+# 3. Verify restored tables:
+psql -U rvf_migrator -h <db_host> -d rvfitness -c "SELECT version_num FROM alembic_version;"
+
+# 4. Restart backend workers:
 sudo systemctl start rvfitness-backend
 ```
+
+#### Step 4: Recovery from Failed Backup or Restore Operations
+- **If Backup Creation Fails**:
+  1. Inspect `backup.log` in the target directory for the exact PostgreSQL error message.
+  2. Verify PostgreSQL container health (`docker ps` or `pg_isready`).
+  3. Verify disk space on `E:\` drive (`Get-PSDrive E`).
+  4. Ensure no concurrent locks are blocking table access (`SELECT pid, relation::regclass, mode, granted FROM pg_locks WHERE NOT granted;`).
+  5. Re-run `python scripts/backup_and_restore.py` with a fresh timestamp.
+- **If Restore Verification Fails**:
+  1. Inspect `restore_verification.log` for SQL syntax or constraint violation errors.
+  2. Confirm the dump file SHA-256 hash matches `SHA256SUMS`.
+  3. Ensure no version mismatch exists between the dumping PostgreSQL engine and the restoring engine.
+  4. Never force a restore over live environments until the isolated test passes cleanly.
+
+#### Step 5: Backup Retention and Off-Site Storage Policy
+- **Local Retention Policy**: Maintain rolling backups on `E:\RVFitnessBackup` for 14 days. Retain monthly golden milestone dumps indefinitely.
+- **Off-Site Storage Notice**: Storage on the local `E:` drive is an on-premise local disk backup. It protects against software defects, migration failures, and accidental table deletions, but does NOT protect against host hardware failure, ransomware, or physical facility loss. For production, replicate the timestamped backup directories to off-site cloud storage (AWS S3 Glacier, Google Cloud Storage, or Azure Blob) with lifecycle rules and server-side encryption.
+- **Scheduling Notice**: Automated cron/systemd scheduling is not yet activated on the host; backups must be triggered manually before each deployment until Phase 12 infrastructure automation is deployed.
 
 ---
 

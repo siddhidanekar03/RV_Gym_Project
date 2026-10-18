@@ -147,7 +147,7 @@ def create_announcement(
 
     if pub_at and exp_at and exp_at <= pub_at:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="expires_at must be strictly later than publish_at.",
         )
 
@@ -276,7 +276,7 @@ def update_announcement(
     if announcement.published_at and announcement.expires_at:
         if announcement.expires_at <= announcement.published_at:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="expires_at must be strictly later than publish_at.",
             )
 
@@ -346,7 +346,7 @@ def publish_announcement(
 
     if exp_at and pub_at and exp_at <= pub_at:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="expires_at must be strictly later than publish_at.",
         )
 

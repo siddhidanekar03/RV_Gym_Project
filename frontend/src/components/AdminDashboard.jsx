@@ -10,17 +10,26 @@ import {
   QrCode,
   LayoutDashboard,
   Megaphone,
-  Dumbbell
+  Dumbbell,
+  Check,
+  X
 } from 'lucide-react';
-import { fetchAdminOverview } from '../api';
+import { fetchAdminOverview, approveOwnerEnrollment, rejectOwnerEnrollment } from '../api';
 import StaffAttendanceDesk from './StaffAttendanceDesk';
 import AdminAnnouncements from './AdminAnnouncements';
 import AdminWorkouts from './AdminWorkouts';
+import GymOwnerPanel from './GymOwnerPanel';
 
 export default function AdminDashboard({ user, token, onClose }) {
+  const isOwner = user?.role === 'org_admin' || user?.role === 'admin' || user?.staff_role === 'Gym Owner';
+  if (isOwner) {
+    return <GymOwnerPanel user={user} onClose={onClose} />;
+  }
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionFeedback, setActionFeedback] = useState(null);
   const [currentSection, setCurrentSection] = useState('attendance'); // 'attendance' | 'announcements' | 'workouts' | 'overview'
 
   const loadData = async () => {
@@ -33,6 +42,32 @@ export default function AdminDashboard({ user, token, onClose }) {
       setError(err.message || 'Unable to retrieve administrative data.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApprove = async (enrollmentId) => {
+    setError(null);
+    setActionFeedback(null);
+    try {
+      const res = await approveOwnerEnrollment(enrollmentId, { record_payment: false });
+      setActionFeedback(res.message || 'Enrollment approved. Awaiting front-desk payment.');
+      loadData();
+    } catch (err) {
+      setError(err.message || 'Failed to approve enrollment.');
+    }
+  };
+
+  const handleReject = async (enrollmentId) => {
+    const reason = prompt('Please enter the reason for rejecting this application:');
+    if (!reason || !reason.trim()) return;
+    setError(null);
+    setActionFeedback(null);
+    try {
+      const res = await rejectOwnerEnrollment(enrollmentId, { reason: reason.trim() });
+      setActionFeedback(res.message || 'Enrollment application rejected.');
+      loadData();
+    } catch (err) {
+      setError(err.message || 'Failed to reject enrollment.');
     }
   };
 
@@ -164,6 +199,13 @@ export default function AdminDashboard({ user, token, onClose }) {
               </div>
             </div>
 
+            {actionFeedback && (
+              <div className="owner-alert-banner success" role="status">
+                <Check size={18} />
+                <span>{actionFeedback}</span>
+              </div>
+            )}
+
             {/* Recent Enrollments Table */}
             <div className="admin-section-box">
               <div className="admin-box-header">
@@ -188,19 +230,47 @@ export default function AdminDashboard({ user, token, onClose }) {
                         <th scope="col">Contact Phone</th>
                         <th scope="col">Amount Due</th>
                         <th scope="col">Status</th>
+                        <th scope="col" className="text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {data.recentEnrollments.map((enr) => (
-                        <tr key={enr.id}>
-                          <td className="font-mono text-muted">{enr.id}</td>
-                          <td><strong>{enr.name}</strong></td>
-                          <td><span className="category-tag-subtle">{enr.planName}</span></td>
-                          <td>{enr.phone}</td>
-                          <td className="gold-text font-bold">₹{enr.price?.toLocaleString('en-IN')}</td>
-                          <td><span className="badge-warning">{enr.status}</span></td>
-                        </tr>
-                      ))}
+                      {data.recentEnrollments.map((enr) => {
+                        const isPending = enr.status === 'pending_verification' || enr.status === 'Pending Verification at Gym Desk';
+                        return (
+                          <tr key={enr.id}>
+                            <td className="font-mono text-muted">{enr.id?.slice(0, 8)}...</td>
+                            <td><strong>{enr.name}</strong></td>
+                            <td><span className="category-tag-subtle">{enr.planName}</span></td>
+                            <td>{enr.phone}</td>
+                            <td className="gold-text font-bold">₹{enr.price?.toLocaleString('en-IN')}</td>
+                            <td><span className="badge-warning">{enr.status}</span></td>
+                            <td className="text-right">
+                              {isPending && (
+                                <div className="action-buttons-group">
+                                  <button
+                                    type="button"
+                                    className="btn-approve-sm"
+                                    onClick={() => handleApprove(enr.id)}
+                                    title="Approve membership application"
+                                  >
+                                    <Check size={14} />
+                                    <span>Approve</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-reject-sm"
+                                    onClick={() => handleReject(enr.id)}
+                                    title="Reject membership application"
+                                  >
+                                    <X size={14} />
+                                    <span>Reject</span>
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

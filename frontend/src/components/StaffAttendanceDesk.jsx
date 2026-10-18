@@ -14,8 +14,10 @@ import {
   Clock,
   Download,
   AlertTriangle,
-  UserPlus
+  UserPlus,
+  User
 } from 'lucide-react';
+import jsQR from 'jsqr';
 import {
   lookupMembersForDesk,
   manualCheckIn,
@@ -23,8 +25,11 @@ import {
   managerOverride,
   paperBackfill,
   fetchBranchMonthlyReport,
-  getBranchReportExportUrl
+  getBranchReportExportUrl,
+  downloadBranchReportExport
 } from '../api';
+import AssignMembershipModal from './AssignMembershipModal';
+import MemberProfileModal from './MemberProfileModal';
 
 const MANUAL_REASONS = [
   { value: 'no_account', label: 'No Online Account (Walk-in / Offline Member)' },
@@ -36,7 +41,15 @@ const MANUAL_REASONS = [
 const TODAY_ISO = new Date().toISOString().split('T')[0];
 
 export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawadi' }) {
+  const effectiveBranchId = (!branchId || branchId === 'all') ? (currentUser?.branch_id || 'narsobawadi') : branchId;
   const [activeTab, setActiveTab] = useState('lookup'); // 'lookup' | 'qr_scan' | 'override' | 'backfill' | 'reports'
+
+  // Direct Membership Assignment State
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignTargetMember, setAssignTargetMember] = useState(null);
+
+  // Member Profile Modal State
+  const [profileModalMemberId, setProfileModalMemberId] = useState(null);
 
   // Member Search & Disambiguation State
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,8 +75,13 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
   const [scannerMode, setScannerMode] = useState('wedge'); // 'wedge' | 'camera'
   const [imagerToken, setImagerToken] = useState('');
   const [cameraError, setCameraError] = useState(null);
+  const [scanSuccessFlash, setScanSuccessFlash] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const hiddenCanvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const lastScannedTokenRef = useRef('');
+  const lastScanTimeRef = useRef(0);
 
   // Manager Override State
   const [overrideAttemptId, setOverrideAttemptId] = useState('');
@@ -97,12 +115,25 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
     setLoadingReport(true);
     setReportError(null);
     try {
-      const data = await fetchBranchMonthlyReport(branchId, reportYear, reportMonth);
+      const data = await fetchBranchMonthlyReport(effectiveBranchId, reportYear, reportMonth);
       setReportData(data);
     } catch (err) {
       setReportError(err.message || 'Unable to load branch monthly attendance report.');
     } finally {
       setLoadingReport(false);
+    }
+  };
+
+  const [exportingFormat, setExportingFormat] = useState(null);
+
+  const handleExport = async (format) => {
+    setExportingFormat(format);
+    try {
+      await downloadBranchReportExport(effectiveBranchId, reportYear, reportMonth, format);
+    } catch (err) {
+      setReportError(err.message || `Failed to export ${format.toUpperCase()} report.`);
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -126,6 +157,10 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
   };
 
   // Debounced Member Lookup
@@ -138,7 +173,7 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
       setSearching(true);
       setLookupError(null);
       try {
-        const res = await lookupMembersForDesk(searchQuery, branchId);
+        const res = await lookupMembersForDesk(searchQuery, effectiveBranchId);
         setSearchResults(res.members || []);
         if (res.members && res.members.length === 1) {
           setSelectedMember(res.members[0]);
@@ -151,24 +186,120 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, branchId]);
+  }, [searchQuery, effectiveBranchId]);
 
   // Load Monthly Report on tab switch or period change
   useEffect(() => {
     if (activeTab === 'reports') {
       loadMonthlyReport();
     }
-  }, [activeTab, reportYear, reportMonth, branchId]);
+  }, [activeTab, reportYear, reportMonth, effectiveBranchId]);
 
-  // Camera QR Scanner Lifecycle
+  // Direct QR verification helper
+  const handleDirectQRScan = async (rawToken) => {
+    if (!rawToken || !rawToken.trim()) return;
+    const token = rawToken.trim().replace(/^["']|["']$/g, '');
+    setCheckInError(null);
+    setCheckInFeedback(null);
+    setIsSubmittingCheckIn(true);
+
+    try {
+      const res = await qrCheckIn(token, effectiveBranchId);
+      setCheckInFeedback(res.message || 'QR Check-In recorded successfully.');
+      setImagerToken('');
+    } catch (err) {
+      setCheckInError(err.message || 'QR Verification failed.');
+    } finally {
+      setIsSubmittingCheckIn(false);
+    }
+  };
+
+  // Camera QR Scanner Lifecycle and Active Frame Decode Loop
   useEffect(() => {
     if (activeTab === 'qr_scan' && scannerMode === 'camera') {
       startCamera();
     } else {
       stopCamera();
+      return;
     }
-    return () => stopCamera();
-  }, [activeTab, scannerMode]);
+
+    let isScanning = true;
+    let barcodeDetector = null;
+    if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+      try {
+        barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch (err) {
+        barcodeDetector = null;
+      }
+    }
+
+    const scanLoop = async () => {
+      if (!isScanning) return;
+
+      const video = videoRef.current;
+      if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        const now = Date.now();
+        if (now - lastScanTimeRef.current >= 120 && !isSubmittingCheckIn) {
+          let detectedToken = null;
+
+          // 1. Try native BarcodeDetector if supported
+          if (barcodeDetector) {
+            try {
+              const barcodes = await barcodeDetector.detect(video);
+              if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+                detectedToken = barcodes[0].rawValue.trim();
+              }
+            } catch (e) {
+              // fallback to jsQR
+            }
+          }
+
+          // 2. jsQR Canvas fallback
+          if (!detectedToken && hiddenCanvasRef.current) {
+            try {
+              const canvas = hiddenCanvasRef.current;
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              const ctx = canvas.getContext('2d', { willReadFrequently: true });
+              if (ctx) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                  inversionAttempts: 'dontInvert',
+                });
+                if (code && code.data && code.data.trim()) {
+                  detectedToken = code.data.trim();
+                }
+              }
+            } catch (e) {
+              // Ignore canvas buffer glitch
+            }
+          }
+
+          if (detectedToken) {
+            if (detectedToken !== lastScannedTokenRef.current || now - lastScanTimeRef.current > 3000) {
+              lastScannedTokenRef.current = detectedToken;
+              lastScanTimeRef.current = now;
+              setScanSuccessFlash(true);
+              setTimeout(() => setScanSuccessFlash(false), 900);
+              await handleDirectQRScan(detectedToken);
+            }
+          }
+        }
+      }
+
+      if (isScanning) {
+        animationFrameRef.current = requestAnimationFrame(scanLoop);
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(scanLoop);
+
+    return () => {
+      isScanning = false;
+      stopCamera();
+    };
+  }, [activeTab, scannerMode, isSubmittingCheckIn, effectiveBranchId]);
 
   // Handle Manual Check-In Submit
   const handleManualCheckInSubmit = async (e) => {
@@ -179,7 +310,7 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
 
     try {
       let payload = {
-        branchId,
+        branchId: effectiveBranchId,
         reasonCode: manualReason,
         notes: manualNotes,
       };
@@ -219,20 +350,7 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
   const handleQRCheckInSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!imagerToken.trim()) return;
-
-    setCheckInError(null);
-    setCheckInFeedback(null);
-    setIsSubmittingCheckIn(true);
-
-    try {
-      const res = await qrCheckIn(imagerToken.trim(), branchId);
-      setCheckInFeedback(res.message);
-      setImagerToken('');
-    } catch (err) {
-      setCheckInError(err.message || 'QR Verification failed');
-    } finally {
-      setIsSubmittingCheckIn(false);
-    }
+    await handleDirectQRScan(imagerToken);
   };
 
   // Handle Manager Override Submit
@@ -384,7 +502,21 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
             <div className="desk-card">
               <div className="card-header-row">
                 <h3 className="desk-card-title">Member Search & Eligibility</h3>
-                <span className="desk-badge">Branch: {branchId}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn-desk-assign-action"
+                    onClick={() => {
+                      setAssignTargetMember(null);
+                      setShowAssignModal(true);
+                    }}
+                    title="Assign membership plan to existing member"
+                  >
+                    <UserPlus size={14} />
+                    <span>Assign Membership</span>
+                  </button>
+                  <span className="desk-badge">Branch: {branchId}</span>
+                </div>
               </div>
 
               {/* Toggle offline walk-in */}
@@ -461,7 +593,7 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
                           <span className={`status-pill ${m.status}`}>{m.status}</span>
                         </div>
 
-                        {/* Real-time eligibility badge */}
+                        {/* Real-time eligibility badge & profile button */}
                         <div className="member-item-eligibility">
                           {m.isEligible ? (
                             <span className="eligibility-tag eligible">
@@ -472,6 +604,18 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
                               <AlertTriangle size={12} /> {m.ineligibilityReason || 'Ineligible'}
                             </span>
                           )}
+                          <button
+                            type="button"
+                            className="btn-desk-profile-tag"
+                            title="View member health profile, emergency contacts, and measurements"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfileModalMemberId(m.id);
+                            }}
+                          >
+                            <User size={12} />
+                            <span>Profile</span>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -532,8 +676,19 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
                         ID: <strong>{selectedMember.membershipId}</strong> | Phone: <code>{selectedMember.maskedPhone}</code>
                       </p>
                     </div>
-                    <div className="streak-badge">
-                      <span className="gold-text">{selectedMember.streakDays}</span> Day Streak
+                    <div className="selected-card-badges">
+                      <button
+                        type="button"
+                        className="btn-desk-view-profile"
+                        title="View detailed health, injury history, and body measurements"
+                        onClick={() => setProfileModalMemberId(selectedMember.id)}
+                      >
+                        <User size={13} />
+                        <span>Full Profile</span>
+                      </button>
+                      <div className="streak-badge">
+                        <span className="gold-text">{selectedMember.streakDays}</span> Day Streak
+                      </div>
                     </div>
                   </div>
 
@@ -552,17 +707,37 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
                         <div>
                           <strong>Check-In Denied by Policy</strong>
                           <p>{selectedMember.ineligibilityReason}</p>
-                          {isManagerOrAdmin && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
                             <button
                               type="button"
-                              className="btn-override-link"
+                              className="btn-desk-assign-action"
                               onClick={() => {
-                                setActiveTab('override');
+                                setAssignTargetMember({
+                                  id: selectedMember.id,
+                                  name: selectedMember.name,
+                                  phone: selectedMember.phone || selectedMember.maskedPhone,
+                                  email: selectedMember.email || '',
+                                  branch_id: selectedMember.branchId || branchId,
+                                  membership_id: selectedMember.membershipId,
+                                });
+                                setShowAssignModal(true);
                               }}
                             >
-                              Request Manager Override
+                              <UserPlus size={13} />
+                              <span>Assign Membership Plan</span>
                             </button>
-                          )}
+                            {isManagerOrAdmin && (
+                              <button
+                                type="button"
+                                className="btn-override-link"
+                                onClick={() => {
+                                  setActiveTab('override');
+                                }}
+                              >
+                                Request Manager Override
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -673,9 +848,10 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
                 ) : (
                   <div className="camera-viewport-wrap">
                     <video ref={videoRef} autoPlay playsInline muted className="scanner-video-feed" />
-                    <div className="scanner-reticle" aria-hidden="true" />
+                    <canvas ref={hiddenCanvasRef} style={{ display: 'none' }} />
+                    <div className={`scanner-reticle ${scanSuccessFlash ? 'scanner-reticle-flash' : ''}`} aria-hidden="true" />
                     <div className="scanner-guidance">
-                      Align member entry QR within the gold frame
+                      {scanSuccessFlash ? 'QR Code Scanned! Verifying admission...' : 'Align member entry QR within the gold frame'}
                     </div>
                   </div>
                 )}
@@ -966,22 +1142,26 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
 
               {/* Export Buttons */}
               <div className="export-actions-group">
-                <a
-                  href={getBranchReportExportUrl(branchId, reportYear, reportMonth, 'csv')}
-                  download
+                <button
+                  type="button"
+                  onClick={() => handleExport('csv')}
+                  disabled={exportingFormat === 'csv'}
                   className="btn-export csv"
+                  title="Export Attendance Report as CSV"
                 >
                   <Download size={15} />
-                  <span>Export CSV</span>
-                </a>
-                <a
-                  href={getBranchReportExportUrl(branchId, reportYear, reportMonth, 'pdf')}
-                  download
+                  <span>{exportingFormat === 'csv' ? 'Exporting...' : 'Export CSV'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExport('pdf')}
+                  disabled={exportingFormat === 'pdf'}
                   className="btn-export pdf"
+                  title="Export Attendance Report as PDF"
                 >
                   <FileText size={15} />
-                  <span>Export PDF</span>
-                </a>
+                  <span>{exportingFormat === 'pdf' ? 'Exporting...' : 'Export PDF'}</span>
+                </button>
               </div>
             </div>
 
@@ -1115,6 +1295,37 @@ export default function StaffAttendanceDesk({ currentUser, branchId = 'narsobawa
             )}
           </div>
         </div>
+      )}
+
+      {/* Direct Membership Assignment Modal */}
+      <AssignMembershipModal
+        isOpen={showAssignModal}
+        onClose={() => setShowAssignModal(false)}
+        preselectedMember={assignTargetMember}
+        initialBranchId={effectiveBranchId}
+        onSuccess={() => {
+          setCheckInFeedback('Membership successfully assigned to member.');
+          // Refresh member search
+          if (searchQuery.trim()) {
+            setSearchQuery(searchQuery.trim());
+          }
+        }}
+      />
+
+      {/* Staff / Coach Member Profile Modal */}
+      {profileModalMemberId && (
+        <MemberProfileModal
+          memberId={profileModalMemberId}
+          currentUser={currentUser}
+          onClose={() => setProfileModalMemberId(null)}
+          onProfileUpdated={() => {
+            if (searchQuery.trim()) {
+              lookupMembersForDesk(searchQuery, effectiveBranchId)
+                .then((res) => setSearchResults(res.members || []))
+                .catch(() => {});
+            }
+          }}
+        />
       )}
     </div>
   );

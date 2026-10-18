@@ -49,14 +49,32 @@ export default function Trainers({ onBookConsultation }) {
         <div className="trainers-grid">
           {trainers.map((coach) => (
             <article key={coach.id} className="trainer-card">
-              {/* Clearly Marked Approved Portrait Placeholder */}
+              {/* Coach Portrait Media Box */}
               <div className="trainer-media-box">
-                <div className="trainer-placeholder-avatar">
-                  <span className="coach-monogram">{coach.name.charAt(0)}</span>
-                  <span className="portrait-badge">
-                    [Pending Approved Coach Portrait: {coach.name}]
-                  </span>
-                </div>
+                {coach.photo_url ? (
+                  <>
+                    <img
+                      src={coach.photo_url}
+                      alt={coach.name}
+                      className="coach-photo-img"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        const fallback = e.currentTarget.parentElement?.querySelector('.trainer-placeholder-avatar');
+                        if (fallback) fallback.style.display = 'flex';
+                      }}
+                    />
+                    <div className="trainer-placeholder-avatar" style={{ display: 'none' }}>
+                      <span className="coach-monogram">{coach.name.charAt(0)}</span>
+                      <span className="portrait-badge">RVFitness Certified Coach</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="trainer-placeholder-avatar">
+                    <span className="coach-monogram">{coach.name.charAt(0)}</span>
+                    <span className="portrait-badge">RVFitness Certified Coach</span>
+                  </div>
+                )}
                 <div className="coach-exp-tag">{coach.experience}</div>
               </div>
 

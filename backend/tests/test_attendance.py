@@ -35,7 +35,6 @@ def test_active_member_checkin_success(client: TestClient, db_session: Session):
 
     checkin_res = client.post(
         "/api/attendance/check-in",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert checkin_res.status_code == 200
@@ -77,7 +76,6 @@ def test_checkin_denied_for_pending_membership(client: TestClient, db_session: S
 
     res = client.post(
         "/api/attendance/check-in",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert res.status_code == 403
@@ -108,7 +106,6 @@ def test_checkin_denied_for_expired_membership(client: TestClient, db_session: S
 
     res = client.post(
         "/api/attendance/check-in",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert res.status_code == 403
@@ -140,7 +137,6 @@ def test_duplicate_checkin_rejected_same_day(client: TestClient, db_session: Ses
     # 1. First checkin succeeds
     first_res = client.post(
         "/api/attendance/check-in",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert first_res.status_code == 200
@@ -148,7 +144,6 @@ def test_duplicate_checkin_rejected_same_day(client: TestClient, db_session: Ses
     # 2. Second checkin on same day is rejected
     second_res = client.post(
         "/api/attendance/check-in",
-        cookies={SESSION_COOKIE_NAME: session_token},
         headers={CSRF_HEADER_NAME: csrf_token},
     )
     assert second_res.status_code == 400

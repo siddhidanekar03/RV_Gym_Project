@@ -54,18 +54,23 @@ def check_in(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CheckInResponse:
+    # Business Security Policy: Remote self check-in via web button is disabled for members.
+    # Members must present dynamic Entry Pass QR at gym scanner or front desk.
+    if user.role == "member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Remote web check-in has been disabled. Please present your dynamic Entry Pass QR code at the gym desk or entrance scanner.",
+        )
+
     target_branch_id = branch_id or user.branch_id or "narsobawadi"
     branch_today = get_branch_local_date(target_branch_id)
     member_id_str = resolve_member_identity(
         user_id=user.id, membership_id=user.membership_id, member_phone=user.phone
     )
-
-    # 1. Shared Eligibility Check
-    if user.role == "member":
-        eligible, reason_code, message = check_attendance_eligibility(
-            db=db, user=user, branch_id=target_branch_id
-        )
-        if not eligible:
+    eligible, reason_code, message = check_attendance_eligibility(
+        db=db, user=user, branch_id=target_branch_id
+    )
+    if not eligible:
             attempt = AttendanceAttempt(
                 member_identity=member_id_str,
                 user_id=user.id,
@@ -212,29 +217,48 @@ def get_qr_token(user: User = Depends(get_current_user)) -> QRTokenResponse:
 @router.post(
     "/attendance/qr-check-in",
     response_model=CheckInResponse,
-    dependencies=[Depends(require_csrf), Depends(rate_limit(max_requests=60, window_seconds=60))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(rate_limit(max_requests=60, window_seconds=60)),
+        Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff")),
+    ],
     summary="Scan & Consume QR Code for Floor Check-In",
+)
+@router.post(
+    "/attendance/qr-checkin",
+    response_model=CheckInResponse,
+    dependencies=[
+        Depends(require_csrf),
+        Depends(rate_limit(max_requests=60, window_seconds=60)),
+        Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff")),
+    ],
+    include_in_schema=False,
 )
 def scan_qr_checkin(
     payload: QRCheckInRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CheckInResponse:
-    # Acting operator: if desk staff is scanning, record staff; if turnstile/kiosk member self-scans, record member
-    staff = current_user if current_user.role != "member" else None
+    # Authenticated desk operator or turnstile scanner
+    raw_token = payload.get_token() if hasattr(payload, "get_token") else (payload.qrToken or payload.qr_token)
+    target_branch = payload.get_branch() if hasattr(payload, "get_branch") else (payload.branchId or payload.branch_id or "narsobawadi")
+
+    # Enforce staff branch isolation: branch staff can only check in at their assigned branch
+    verify_branch_access(current_user, target_branch)
+
     try:
         record = process_qr_checkin(
             db=db,
-            qr_token=payload.qrToken,
-            branch_id=payload.branchId,
-            staff=staff,
+            qr_token=raw_token,
+            branch_id=target_branch,
+            staff=current_user,
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    branch_today = get_branch_local_date(payload.branchId)
+    branch_today = get_branch_local_date(target_branch)
     first_of_month = date(branch_today.year, branch_today.month, 1)
     month_count = (
         db.query(func.count(AttendanceRecord.id))
@@ -269,6 +293,15 @@ def scan_qr_checkin(
         Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff")),
     ],
     summary="Desk Staff Assisted Manual Check-In with Mandatory Reason Code",
+)
+@router.post(
+    "/attendance/manual-checkin",
+    response_model=CheckInResponse,
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_roles("org_admin", "admin", "branch_manager", "manager", "front_desk", "staff")),
+    ],
+    include_in_schema=False,
 )
 def manual_checkin(
     payload: ManualCheckInRequest,

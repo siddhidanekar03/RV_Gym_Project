@@ -32,18 +32,30 @@ from backend.app.services.attendance_service import (
 )
 from backend.app.cli.prune_nonces import run_prune_nonces, RVF_QR_CLEANUP_ADVISORY_LOCK_ID
 
-POSTGRES_TEST_URL = os.environ.get(
-    "POSTGRESQL_TEST_URL",
-    os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg2://postgres:postgresPassword123@127.0.0.1:5432/rvfitness_test"),
+from typing import Optional
+from urllib.parse import urlparse
+
+from backend.app.core.postgres_test_guard import (
+    sanitize_db_url,
+    validate_disposable_test_target,
+    verify_live_database_identity,
 )
 
+# Require explicit opt-in and URL configuration to guarantee test isolation.
+# Never silently fall back to an implicit database with embedded credentials.
+POSTGRES_TEST_URL = os.environ.get("POSTGRESQL_TEST_URL")
+OPT_IN_DESTRUCTIVE = os.environ.get("ALLOW_DESTRUCTIVE_POSTGRES_TESTS", "").strip().lower() == "true"
 
-def is_postgres_available(url: str) -> bool:
+
+def is_postgres_available(url: Optional[str]) -> bool:
     """Check whether PostgreSQL test database is reachable with short timeout."""
+    if not url or not OPT_IN_DESTRUCTIVE:
+        return False
     try:
+        preflight = validate_disposable_test_target(url)
         eng = create_engine(url, connect_args={"connect_timeout": 2})
         with eng.connect() as conn:
-            conn.execute(sa.text("SELECT 1"))
+            verify_live_database_identity(conn, expected_db=preflight["database"])
         eng.dispose()
         return True
     except Exception:
@@ -51,47 +63,70 @@ def is_postgres_available(url: str) -> bool:
 
 
 POSTGRES_AVAILABLE = is_postgres_available(POSTGRES_TEST_URL)
-pytestmark = pytest.mark.skipif(
-    not POSTGRES_AVAILABLE,
-    reason=f"PostgreSQL test database not available at {POSTGRES_TEST_URL}. "
-           f"To verify: start PostgreSQL (e.g. via docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=rvfitness_test postgres:16-alpine) "
-           f"and re-run.",
-)
+
+if not OPT_IN_DESTRUCTIVE:
+    skip_reason = (
+        "ALLOW_DESTRUCTIVE_POSTGRES_TESTS is unset or not 'true'. "
+        "Explicit opt-in is required to permit destructive schema operations (DROP SCHEMA, migrations)."
+    )
+elif not POSTGRES_TEST_URL:
+    skip_reason = (
+        "POSTGRESQL_TEST_URL environment variable is unset. "
+        "Explicit configuration of an isolated disposable test database is mandatory for PostgreSQL integration tests."
+    )
+else:
+    skip_reason = f"PostgreSQL test database not available or rejected by safety guard at {sanitize_db_url(POSTGRES_TEST_URL)}."
+
+pytestmark = pytest.mark.skipif(not POSTGRES_AVAILABLE, reason=skip_reason)
 
 
 @pytest.fixture(scope="module")
 def pg_engine():
     """Create isolated PostgreSQL engine and apply clean Alembic migrations to head."""
+    # 1. Static preflight guard
+    preflight = validate_disposable_test_target(POSTGRES_TEST_URL)
+    expected_db = preflight["database"]
+
     engine = create_engine(
         POSTGRES_TEST_URL,
         pool_size=10,
         max_overflow=5,
         isolation_level="READ COMMITTED",
     )
-    # Log PostgreSQL server version
+
+    # 2. Verify live database identity before any destructive SQL
     with engine.connect() as conn:
+        verify_live_database_identity(conn, expected_db=expected_db)
         ver = conn.execute(sa.text("SELECT version();")).scalar()
-        print(f"\n[PostgreSQL Integration] Connected to: {ver}")
+        print(f"\n[PostgreSQL Integration] Verified disposable target: {preflight['sanitized_url']}")
+        print(f"[PostgreSQL Integration] Connected to: {ver}")
 
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     ini_path = os.path.join(backend_dir, "alembic.ini")
     alembic_cfg = Config(ini_path)
     alembic_cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
-    alembic_cfg.set_main_option("sqlalchemy.url", POSTGRES_TEST_URL)
+    alembic_cfg.set_main_option(
+        "sqlalchemy.url",
+        POSTGRES_TEST_URL.replace("%", "%%"),
+    )
 
-    # 1. Clean schema: drop and recreate public tables or run upgrade
-    with engine.connect() as conn:
-        conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+    # 3. Clean schema: drop and recreate public schema on verified disposable target
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        verify_live_database_identity(conn, expected_db=expected_db)
+        conn.execute(
             sa.text("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         )
+
     # Run Alembic migrations from base to head on PostgreSQL
     command.upgrade(alembic_cfg, "head")
 
     yield engine
 
-    # Clean teardown
-    with engine.connect() as conn:
-        conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+    # Clean teardown: verify identity again before dropping schema
+    preflight = validate_disposable_test_target(POSTGRES_TEST_URL)
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        verify_live_database_identity(conn, expected_db=preflight["database"])
+        conn.execute(
             sa.text("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         )
     engine.dispose()
@@ -106,8 +141,10 @@ def pg_session(pg_engine):
     yield session
 
     session.close()
+    preflight = validate_disposable_test_target(POSTGRES_TEST_URL)
     with pg_engine.connect() as conn:
         with conn.begin():
+            verify_live_database_identity(conn, expected_db=preflight["database"])
             conn.execute(sa.text("DELETE FROM workout_session_exercises;"))
             conn.execute(sa.text("DELETE FROM workout_sessions;"))
             conn.execute(sa.text("DELETE FROM workout_plan_exercises;"))

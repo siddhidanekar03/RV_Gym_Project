@@ -25,11 +25,16 @@ from backend.app.models.workout import (
     WorkoutSessionExercise,
     FitnessProgressRecord,
 )
+from backend.app.models.website_content import WebsiteContent, EquipmentItem, GalleryItem
+from backend.app.models.member_profile import MemberProfile, MemberBodyMeasurement
 
 __all__ = [
     "Base",
     "TimestampMixin",
     "generate_uuid",
+    "WebsiteContent",
+    "EquipmentItem",
+    "GalleryItem",
     "Organization",
     "Branch",
     "MemberBranchAccess",
@@ -59,4 +64,6 @@ __all__ = [
     "WorkoutSession",
     "WorkoutSessionExercise",
     "FitnessProgressRecord",
+    "MemberProfile",
+    "MemberBodyMeasurement",
 ]

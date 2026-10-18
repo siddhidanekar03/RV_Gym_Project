@@ -28,6 +28,7 @@ class MembershipPlan(Base, TimestampMixin):
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     perks: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Relationships
@@ -69,6 +70,9 @@ class Enrollment(Base, TimestampMixin):
     plan_id: Mapped[str] = mapped_column(
         String(50), ForeignKey("membership_plans.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     branch_id: Mapped[str] = mapped_column(
         String(50), default="narsobawadi", nullable=False, index=True
     )
@@ -82,6 +86,7 @@ class Enrollment(Base, TimestampMixin):
     )
     accepted_terms: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     verified_by_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -93,6 +98,7 @@ class Enrollment(Base, TimestampMixin):
 
     # Relationships
     plan: Mapped["MembershipPlan"] = relationship("MembershipPlan", back_populates="enrollments")
+    user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
     verified_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[verified_by_id])
     initial_invoice: Mapped[Optional["Invoice"]] = relationship(
         "Invoice", back_populates="enrollment", uselist=False

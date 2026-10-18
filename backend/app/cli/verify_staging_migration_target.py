@@ -220,7 +220,22 @@ def run_target_verification(
         )
 
     # Server network identity verification beyond database name
-    if server_ip and server_ip != target_host and server_ip not in target_approved_hosts:
+    server_ip_clean = server_ip.split("/")[0] if server_ip else ""
+    host_resolved_ip = ""
+    if target_host in target_approved_hosts:
+        try:
+            import socket
+            host_resolved_ip = socket.gethostbyname(target_host)
+        except Exception:
+            pass
+
+    ip_matches = (
+        (server_ip and server_ip in target_approved_hosts)
+        or (server_ip_clean and server_ip_clean in target_approved_hosts)
+        or (host_resolved_ip and (server_ip == host_resolved_ip or server_ip_clean == host_resolved_ip))
+    )
+
+    if server_ip and server_ip != target_host and not ip_matches:
         raise ValueError(
             f"Pre-migration check failed: Connected server network address '{server_ip}' "
             f"is not in approved staging hosts list {target_approved_hosts}."

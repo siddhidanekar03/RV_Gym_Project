@@ -198,6 +198,8 @@ class WorkoutSessionResponse(BaseModel):
     status: str
     session_name: Optional[str] = None
     notes: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    rpe: Optional[int] = None
     is_coach_verified: bool = False
     verified_by_id: Optional[str] = None
     points_awarded: int = 0

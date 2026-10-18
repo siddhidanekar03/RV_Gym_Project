@@ -13,6 +13,7 @@ from backend.app.models.contact import ContactInquiry
 from backend.app.models.audit import AuditLog
 from backend.app.schemas.admin import AdminOverviewResponse, AdminContactItem, StaffDutyItem
 from backend.app.schemas.membership import EnrollmentDetail
+from backend.app.api.v1.endpoints.enrollment import build_enrollment_detail
 
 router = APIRouter()
 
@@ -52,22 +53,7 @@ def get_admin_overview(
         .limit(20)
         .all()
     )
-    enrollments_list: List[EnrollmentDetail] = []
-    for enr in enrollments_db:
-        enrollments_list.append(
-            EnrollmentDetail(
-                id=enr.id,
-                planId=enr.plan_id,
-                planName=enr.plan.name if enr.plan else "Membership Plan",
-                price=int(enr.price),
-                currency=enr.currency,
-                name=enr.name,
-                phone=enr.phone,
-                email=enr.email or "",
-                status=enr.status,
-                enrolledAt=enr.enrolled_at.isoformat(),
-            )
-        )
+    enrollments_list = [build_enrollment_detail(enr, db) for enr in enrollments_db]
 
     # 4. Recent contact inquiries from database
     contacts_db = (
