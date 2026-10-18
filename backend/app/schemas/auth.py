@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from backend.app.core.validation import validate_and_normalize_phone
 
 
 class LoginRequest(BaseModel):
@@ -10,9 +11,15 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=150)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=100)
+    password: str = Field(..., min_length=8, max_length=100)
     phone: Optional[str] = Field(None, max_length=50)
+    membershipId: Optional[str] = Field(None, max_length=50)
     acceptedTerms: bool = Field(...)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        return validate_and_normalize_phone(v, required=False, field_name="phone")
 
 
 class SafeUserResponse(BaseModel):

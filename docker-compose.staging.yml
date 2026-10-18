@@ -1,0 +1,85 @@
+# ==============================================================================
+# RVFitness Staging Environment Compose Specification
+# ==============================================================================
+# Isolated staging runtime connecting the multi-stage packaged FastAPI application
+# to a dedicated staging PostgreSQL database and Redis service with persistent named volumes.
+#
+# Isolation and Data Safety Guarantees:
+# 1. Staging media is persisted in the named volume 'rvfitness_media_data'.
+# 2. Staging database data is persisted in 'rvfitness_staging_db_data'.
+# 3. Redis is private to 'staging_network' with no published host ports.
+# 4. This specification is strictly isolated from 'docker-compose.test.yml'.
+# 5. Static credentials below are local staging fixtures only and must be
+#    overridden by environment variables before running outside local verification.
+# ==============================================================================
+
+services:
+  staging-db:
+    image: postgres:16-alpine
+    container_name: rvfitness_staging_db
+    environment:
+      POSTGRES_USER: rvf_app
+      POSTGRES_PASSWORD: stagingFixtureDbPassword123
+      POSTGRES_DB: rvfitness_staging
+    volumes:
+      - rvfitness_staging_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rvf_app -d rvfitness_staging"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    networks:
+      - staging_network
+
+  staging-redis:
+    image: redis:7-alpine
+    container_name: rvfitness_staging_redis
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+    networks:
+      - staging_network
+
+  staging-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.staging
+    image: rvfitness:staging
+    container_name: rvfitness_staging_app
+    ports:
+      - "127.0.0.1:18000:8000"
+    environment:
+      ENVIRONMENT: staging
+      DATABASE_URL: postgresql+psycopg2://rvf_app:stagingFixtureDbPassword123@staging-db:5432/rvfitness_staging?sslmode=disable
+      REDIS_URL: redis://staging-redis:6379/0
+      RATE_LIMITER_BACKEND: redis
+      UPLOADS_DIR: /app/uploads
+      SECRET_KEY: mock-staging-secret-key-fixture-0123456789abcdef0123456789abcdef
+      QR_SIGNING_KEY: mock-staging-qr-signing-key-fixture-0123456789abcdef0123456789abcdef
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:18000","http://127.0.0.1:18000"]'
+      FORWARDED_ALLOW_IPS: 127.0.0.1,::1
+      TRUSTED_PROXIES: '["127.0.0.1","::1"]'
+      # Local staging is served over plain HTTP at 127.0.0.1:18000; secure cookies are disabled so browsers persist session credentials
+      COOKIE_SECURE: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      - rvfitness_media_data:/app/uploads
+    depends_on:
+      staging-db:
+        condition: service_healthy
+      staging-redis:
+        condition: service_healthy
+    networks:
+      - staging_network
+
+networks:
+  staging_network:
+    driver: bridge
+
+volumes:
+  rvfitness_media_data:
+  rvfitness_staging_db_data:

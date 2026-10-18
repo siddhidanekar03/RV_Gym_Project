@@ -85,7 +85,7 @@ export default function Header({
                 title="Open Management Portal"
               >
                 <LayoutDashboard size={16} />
-                <span>{currentUser.role === 'admin' ? 'Staff Desk' : 'Member Portal'}</span>
+                <span>{['admin', 'org_admin', 'branch_manager', 'front_desk', 'staff'].includes(currentUser.role) ? 'Staff Desk' : 'Member Portal'}</span>
               </button>
               <button
                 type="button"
@@ -154,7 +154,7 @@ export default function Header({
                   }}
                 >
                   <LayoutDashboard size={18} />
-                  <span>{currentUser.role === 'admin' ? 'Staff Desk' : 'Member Portal'}</span>
+                  <span>{['admin', 'org_admin', 'branch_manager', 'front_desk', 'staff'].includes(currentUser.role) ? 'Staff Desk' : 'Member Portal'}</span>
                 </button>
               ) : (
                 <button

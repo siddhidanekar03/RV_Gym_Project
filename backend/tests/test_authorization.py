@@ -27,9 +27,9 @@ def test_admin_route_authorization_by_role(client: TestClient, db_session: Sessi
         "/api/auth/login",
         json={"email": "member_authz@rvfitness.in", "password": "pw123456"},
     )
-    mem_cookie = login_mem.cookies.get(SESSION_COOKIE_NAME)
+    assert login_mem.cookies.get(SESSION_COOKIE_NAME) is not None
 
-    forbidden_res = client.get("/api/admin/overview", cookies={SESSION_COOKIE_NAME: mem_cookie})
+    forbidden_res = client.get("/api/admin/overview")
     assert forbidden_res.status_code == 403
     assert "Access denied" in forbidden_res.json()["error"]
 
@@ -48,9 +48,9 @@ def test_admin_route_authorization_by_role(client: TestClient, db_session: Sessi
         "/api/auth/login",
         json={"email": "admin_authz@rvfitness.in", "password": "adminpw123"},
     )
-    admin_cookie = login_admin.cookies.get(SESSION_COOKIE_NAME)
+    assert login_admin.cookies.get(SESSION_COOKIE_NAME) is not None
 
-    allowed_res = client.get("/api/admin/overview", cookies={SESSION_COOKIE_NAME: admin_cookie})
+    allowed_res = client.get("/api/admin/overview")
     assert allowed_res.status_code == 200
     assert "totalMembers" in allowed_res.json()
     assert "activeTodayInGym" in allowed_res.json()

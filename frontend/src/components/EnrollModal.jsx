@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { submitEnrollment } from '../api';
+import { validatePhoneNumber } from '../utils/phoneValidation';
 
 export default function EnrollModal({
   plan,
+  currentUser,
+  onSuccess,
   onClose,
   onOpenPrivacy,
   onOpenTerms
 }) {
   const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    email: '',
+    name: currentUser?.name || '',
+    phone: currentUser?.phone || '',
+    email: currentUser?.email || '',
     acceptedTerms: false
   });
   const [submitting, setSubmitting] = useState(false);
@@ -28,8 +31,9 @@ export default function EnrollModal({
       setError('Please provide your full legal name.');
       return;
     }
-    if (!formData.phone.trim() || formData.phone.trim().length < 8) {
-      setError('Please provide a valid contact phone number.');
+    const phoneErr = validatePhoneNumber(formData.phone, true);
+    if (phoneErr) {
+      setError(phoneErr);
       return;
     }
     if (!formData.acceptedTerms) {
@@ -47,6 +51,9 @@ export default function EnrollModal({
         acceptedTerms: formData.acceptedTerms
       });
       setSuccessResult(res);
+      if (onSuccess) {
+        onSuccess(res);
+      }
     } catch (err) {
       setError(err.message || 'Enrollment submission failed. Please try again.');
     } finally {

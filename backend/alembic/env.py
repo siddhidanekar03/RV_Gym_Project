@@ -30,8 +30,16 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Return database URL from environment variable or validated settings."""
-    return os.environ.get("DATABASE_URL") or settings.DATABASE_URL
+    """Return database URL from alembic config, environment variable, or validated settings."""
+    cfg_url = config.get_main_option("sqlalchemy.url")
+    if cfg_url:
+        return cfg_url
+    return (
+        os.environ.get("POSTGRESQL_TEST_URL")
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("TEST_DATABASE_URL")
+        or settings.DATABASE_URL
+    )
 
 
 def run_migrations_offline() -> None:

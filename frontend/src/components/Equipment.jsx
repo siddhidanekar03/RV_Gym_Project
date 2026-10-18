@@ -74,14 +74,23 @@ export default function Equipment() {
         <div className="equipment-grid">
           {filtered.map((item) => (
             <article key={item.id} className="equipment-card">
-              {/* Clearly Identified Placeholder Visual */}
+              {/* Equipment Photo or Verified Placeholder Visual */}
               <div className="equipment-media-box">
-                <div className="media-placeholder-graphic">
-                  <Dumbbell size={36} className="placeholder-icon-gold" aria-hidden="true" />
-                  <span className="placeholder-badge">
-                    [Pending Authorized Equipment Photo]
-                  </span>
-                </div>
+                {item.primary_image_url ? (
+                  <img
+                    src={item.primary_image_url}
+                    alt={item.name}
+                    className="equipment-img"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <div className="media-placeholder-graphic">
+                    <Dumbbell size={36} className="placeholder-icon-gold" aria-hidden="true" />
+                    <span className="placeholder-badge">
+                      [Pending Authorized Equipment Photo]
+                    </span>
+                  </div>
+                )}
                 <span className="category-tag">{item.category}</span>
               </div>
 

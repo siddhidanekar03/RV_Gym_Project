@@ -104,15 +104,90 @@ EVENTS = [
 ]
 
 
+DEFAULT_GALLERY = [
+    {
+        "id": "gal_1",
+        "zone": "Main Free Weights Floor",
+        "description": "Heavy dumbbell wall from 2.5kg to 60kg and adjustable commercial incline benches.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+    {
+        "id": "gal_2",
+        "zone": "Powerlifting Cage Arena",
+        "description": "Dual commercial 3x3 steel power cages with calibrated steel plates and deadlift jacks.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+    {
+        "id": "gal_3",
+        "zone": "Cable & Pulley Suite",
+        "description": "Precision dual adjustable pulley station with lat pulldown and low row stations.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+    {
+        "id": "gal_4",
+        "zone": "Cardio & Conditioning Row",
+        "description": "Incline commercial treadmills and air resistance rowers with telemetry displays.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+    {
+        "id": "gal_5",
+        "zone": "Functional Turf & Sprint Track",
+        "description": "15-meter sprint turf lane equipped for prowler sled pushes and kettlebell work.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+    {
+        "id": "gal_6",
+        "zone": "Locker & Member Recovery",
+        "description": "Secured personal lockers, sanitized changing areas, and post-workout recovery zone.",
+        "image_url": "",
+        "status": "In Active Use",
+    },
+]
+
+
 @router.get("/info", summary="Public Facility Information")
-def get_gym_info() -> Dict[str, Any]:
-    return GYM_INFO
+def get_gym_info(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    from backend.app.models.website_content import WebsiteContent
+
+    res = dict(GYM_INFO)
+    hero = db.query(WebsiteContent).filter(WebsiteContent.id == "content_homepage_hero").first()
+    if hero and hero.data:
+        res["hero"] = hero.data
+        if "headline" in hero.data:
+            res["tagline"] = hero.data.get("subtitle") or res["tagline"]
+
+    facility = db.query(WebsiteContent).filter(WebsiteContent.id == "content_facility_info").first()
+    if facility and facility.data:
+        res.update(facility.data)
+
+    hours = db.query(WebsiteContent).filter(WebsiteContent.id == "content_hours").first()
+    if hours and hours.data and "hours" in hours.data:
+        res["hours"] = hours.data["hours"]
+
+    contact = db.query(WebsiteContent).filter(WebsiteContent.id == "content_contact").first()
+    if contact and contact.data:
+        if "phone" in contact.data:
+            res["phone"] = contact.data["phone"]
+        if "email" in contact.data:
+            res["email"] = contact.data["email"]
+        if "location" in contact.data:
+            res["location"] = contact.data["location"]
+
+    banner = db.query(WebsiteContent).filter(WebsiteContent.id == "content_promotions_banner").first()
+    if banner and banner.data:
+        res["promotionsBanner"] = banner.data
+
+    return res
 
 
 @router.get("/trainers", summary="Certified Coaching Roster")
 def get_trainers(db: Session = Depends(get_db)) -> Dict[str, List[Dict[str, Any]]]:
     from backend.app.models.user import User
-    from backend.app.models.trainer import TrainerProfile
 
     db_trainers = (
         db.query(User)
@@ -132,6 +207,7 @@ def get_trainers(db: Session = Depends(get_db)) -> Dict[str, List[Dict[str, Any]
                 "experience": f"{t.trainer_profile.experience_years}+ Years Coaching" if t.trainer_profile else "Experienced Coach",
                 "certifications": certs_str or "Certified Personal Trainer",
                 "bio": t.trainer_profile.bio if t.trainer_profile else f"Professional fitness trainer at {t.branch.name if t.branch else 'RVFitness'}.",
+                "photo_url": t.trainer_profile.photo_url if t.trainer_profile and t.trainer_profile.photo_url else None,
             })
         return {"trainers": roster}
 
@@ -139,8 +215,59 @@ def get_trainers(db: Session = Depends(get_db)) -> Dict[str, List[Dict[str, Any]
 
 
 @router.get("/equipment", summary="Verified Training Equipment Inventory")
-def get_equipment() -> Dict[str, List[Dict[str, Any]]]:
+def get_equipment(db: Session = Depends(get_db)) -> Dict[str, List[Dict[str, Any]]]:
+    from backend.app.models.website_content import EquipmentItem
+
+    db_items = (
+        db.query(EquipmentItem)
+        .filter(EquipmentItem.is_published == True)
+        .order_by(EquipmentItem.display_order.asc(), EquipmentItem.created_at.desc())
+        .all()
+    )
+    if db_items:
+        return {
+            "equipment": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "category": item.category,
+                    "spec": item.spec,
+                    "brand_model": item.brand_model,
+                    "primary_image_url": item.primary_image_url,
+                    "images": item.images or [],
+                }
+                for item in db_items
+            ]
+        }
+
     return {"equipment": EQUIPMENT}
+
+
+@router.get("/gallery", summary="Public Facility Gallery Showcases")
+def get_gallery(db: Session = Depends(get_db)) -> Dict[str, List[Dict[str, Any]]]:
+    from backend.app.models.website_content import GalleryItem
+
+    db_gallery = (
+        db.query(GalleryItem)
+        .filter(GalleryItem.is_published == True)
+        .order_by(GalleryItem.display_order.asc(), GalleryItem.created_at.desc())
+        .all()
+    )
+    if db_gallery:
+        return {
+            "gallery": [
+                {
+                    "id": g.id,
+                    "zone": g.zone,
+                    "description": g.description,
+                    "image_url": g.image_url,
+                    "status": g.status,
+                }
+                for g in db_gallery
+            ]
+        }
+
+    return {"gallery": DEFAULT_GALLERY}
 
 
 @router.get("/events", summary="Facility Announcements and Competitions")

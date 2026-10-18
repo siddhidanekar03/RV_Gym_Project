@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CalendarDays, Trophy, RefreshCw, AlertCircle, ArrowUpRight } from 'lucide-react';
-import { fetchEvents } from '../api';
+import { fetchPublicAnnouncements, fetchEvents } from '../api';
 
 export default function Events({ onRegisterEvent }) {
   const [events, setEvents] = useState([]);
@@ -10,8 +10,26 @@ export default function Events({ onRegisterEvent }) {
   useEffect(() => {
     async function load() {
       try {
-        const data = await fetchEvents();
-        setEvents(data.events || []);
+        // First try live announcements feed
+        const annData = await fetchPublicAnnouncements().catch(() => null);
+        if (annData && annData.announcements && annData.announcements.length > 0) {
+          const mapped = annData.announcements.map((a) => ({
+            id: a.id,
+            title: a.title,
+            description: a.body,
+            date: a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : 'Scheduled',
+            status: a.category.toUpperCase(),
+            imageUrl: a.imageUrl,
+            isAnnouncement: true,
+            branchName: a.branchName,
+            isOrgWide: a.isOrgWide,
+          }));
+          setEvents(mapped);
+        } else {
+          // Fallback to static competitions feed
+          const data = await fetchEvents();
+          setEvents(data.events || []);
+        }
       } catch (err) {
         setError(err.message || 'Unable to load scheduled events.');
       } finally {
@@ -62,6 +80,12 @@ export default function Events({ onRegisterEvent }) {
                 </span>
                 <span className="event-status-pill">{evt.status}</span>
               </div>
+
+              {evt.imageUrl && (
+                <div className="event-banner-wrap">
+                  <img src={evt.imageUrl} alt="" className="event-banner-img" />
+                </div>
+              )}
 
               <div className="event-body">
                 <h3 className="event-title">

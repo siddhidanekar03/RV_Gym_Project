@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
@@ -23,6 +23,8 @@ from backend.app.models.user import User
 from backend.app.models.attendance import AttendanceRecord
 from backend.app.models.personal_record import PersonalRecord
 from backend.app.models.audit import AuditLog
+from backend.app.models.membership import Enrollment
+from backend.app.services.attendance_service import reconcile_member_identity_on_account_link
 from backend.app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
@@ -93,9 +95,46 @@ def build_safe_user(user: User, db: Session) -> SafeUserResponse:
     # Assigned coach details
     assigned_trainer_name = user.assigned_trainer.name if user.assigned_trainer else "Coach Rohit V."
 
-    plan_name = user.membership_plan.name if user.membership_plan else (
-        "Quarterly" if user.membership_status == "active" else "Trial / Awaiting Activation"
-    )
+    # Check for active plan vs latest enrollment application
+    if user.membership_plan and user.membership_status == "active":
+        plan_name = user.membership_plan.name
+        status_name = "Active"
+        valid_until_str = user.valid_until.strftime("%B %d, %Y") if user.valid_until else "Active"
+    elif user.membership_plan and user.membership_status == "approved":
+        plan_name = f"{user.membership_plan.name} (Awaiting Payment)"
+        status_name = "Payment Pending"
+        valid_until_str = "Awaiting Desk Payment"
+    else:
+        enr_q = db.query(Enrollment).filter(
+            or_(
+                Enrollment.user_id == user.id,
+                func.lower(Enrollment.email) == user.email.strip().lower(),
+            )
+        )
+        latest_enr = enr_q.order_by(Enrollment.enrolled_at.desc()).first()
+
+        if latest_enr:
+            req_plan_name = latest_enr.plan.name if latest_enr.plan else (user.membership_plan.name if user.membership_plan else "Membership Plan")
+            if latest_enr.status == "active" or user.membership_status == "active":
+                plan_name = req_plan_name
+                status_name = "Active"
+                valid_until_str = user.valid_until.strftime("%B %d, %Y") if user.valid_until else "Active"
+            elif latest_enr.status == "payment_pending" or user.membership_status == "approved":
+                plan_name = f"{req_plan_name} (Awaiting Payment)"
+                status_name = "Payment Pending"
+                valid_until_str = "Awaiting Desk Payment"
+            elif latest_enr.status == "rejected" or user.membership_status == "rejected":
+                plan_name = f"{req_plan_name} (Rejected)"
+                status_name = "Rejected"
+                valid_until_str = "Application Rejected"
+            else:
+                plan_name = f"{req_plan_name} (Pending Verification)"
+                status_name = "Pending Approval"
+                valid_until_str = "Pending Desk Verification"
+        else:
+            plan_name = "Trial / Awaiting Activation"
+            status_name = user.membership_status.capitalize() if user.membership_status else "Pending"
+            valid_until_str = user.valid_until.strftime("%B %d, %Y") if user.valid_until else "Pending Activation"
 
     return SafeUserResponse(
         id=user.id,
@@ -108,8 +147,8 @@ def build_safe_user(user: User, db: Session) -> SafeUserResponse:
         membershipId=user.membership_id,
         membershipPlan=plan_name,
         memberSince=user.member_since.strftime("%B %Y") if user.member_since else "Recent",
-        validUntil=user.valid_until.strftime("%B %d, %Y") if user.valid_until else "Pending Activation",
-        status=user.membership_status.capitalize(),
+        validUntil=valid_until_str,
+        status=status_name,
         streakDays=user.streak_days,
         attendanceThisMonth=monthly_visits,
         todayCheckedIn=today_checkin,
@@ -150,15 +189,22 @@ def register(
             detail="An account with this email address already exists.",
         )
 
-    # Generate unique membership code RVF-YYYY-XXX
-    year = date.today().year
-    rand_code = random.randint(100, 999)
-    membership_code = f"RVF-{year}-{rand_code}"
-
-    # Ensure code uniqueness
-    while db.query(User).filter(User.membership_id == membership_code).first():
+    # Use existing offline membership card if provided, or generate unique RVF-YYYY-XXX
+    if payload.membershipId and payload.membershipId.strip():
+        membership_code = payload.membershipId.strip().upper()
+        existing_card_user = db.query(User).filter(User.membership_id == membership_code).first()
+        if existing_card_user:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Membership card '{membership_code}' is already linked to another registered account.",
+            )
+    else:
+        year = date.today().year
         rand_code = random.randint(100, 999)
         membership_code = f"RVF-{year}-{rand_code}"
+        while db.query(User).filter(User.membership_id == membership_code).first():
+            rand_code = random.randint(100, 999)
+            membership_code = f"RVF-{year}-{rand_code}"
 
     hashed = hash_password(payload.password)
     new_user = User(
@@ -176,9 +222,12 @@ def register(
     db.commit()
     db.refresh(new_user)
 
+    # Reconcile any pre-existing unlinked offline attendance records or attempts
+    reconcile_member_identity_on_account_link(db=db, user=new_user)
+
     # Establish server-side session
     session, raw_token, csrf_token = create_user_session(db, new_user, request)
-    set_auth_cookies(response, raw_token, csrf_token)
+    set_auth_cookies(response, raw_token, csrf_token, request=request)
 
     # Log audit event
     audit = AuditLog(
@@ -228,7 +277,7 @@ def login(
         )
 
     session, raw_token, csrf_token = create_user_session(db, user, request)
-    set_auth_cookies(response, raw_token, csrf_token)
+    set_auth_cookies(response, raw_token, csrf_token, request=request)
 
     # Log audit event
     audit = AuditLog(
@@ -252,22 +301,15 @@ def login(
 
 @router.get("/auth/me", summary="Get Current Authenticated User Profile")
 def get_me(
+    request: Request,
     response: Response,
     user: User = Depends(get_current_user),
     session=Depends(get_current_session),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     safe_user = build_safe_user(user, db)
-    # Ensure CSRF cookie is synchronized
-    response.set_cookie(
-        key=CSRF_COOKIE_NAME,
-        value=session.csrf_token,
-        httponly=False,
-        secure=settings.ENVIRONMENT == "production",
-        samesite="lax",
-        path="/",
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
+    # Ensure session and CSRF cookies are refreshed consistently
+    set_auth_cookies(response, request.cookies.get(SESSION_COOKIE_NAME, ""), session.csrf_token, request=request)
     return {"user": safe_user.model_dump(), "csrfToken": session.csrf_token}
 
 
@@ -278,13 +320,14 @@ def get_me(
     summary="Sign Out and Invalidate Session",
 )
 def logout(
+    request: Request,
     response: Response,
     session=Depends(get_current_session),
     db: Session = Depends(get_db),
 ) -> LogoutResponse:
     session.is_revoked = True
     db.commit()
-    clear_auth_cookies(response)
+    clear_auth_cookies(response, request=request)
 
     # Audit log
     audit = AuditLog(
@@ -320,7 +363,7 @@ def get_csrf(request: Request, response: Response, db: Session = Depends(get_db)
         key=CSRF_COOKIE_NAME,
         value=csrf_val,
         httponly=False,
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.is_cookie_secure(),
         samesite="lax",
         path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,

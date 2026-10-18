@@ -46,3 +46,34 @@ def check_health(response: Response, db: Session = Depends(get_db)) -> HealthRes
         timestamp=now_utc,
         database=db_health,
     )
+
+
+@router.get(
+    "/ready",
+    summary="Application Readiness Probe",
+    description="Low-overhead probe for load balancers and orchestrators checking database readiness.",
+    responses={
+        200: {"description": "Application is ready to accept traffic"},
+        503: {"description": "Application not ready: database connection failure"},
+    },
+)
+def check_readiness(response: Response, db: Session = Depends(get_db)):
+    try:
+        ping_database(db)
+        return {
+            "status": "ready",
+            "environment": settings.ENVIRONMENT,
+            "version": settings.VERSION,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        logger.error(f"Readiness check failed database verification: {exc}")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "not_ready",
+            "environment": settings.ENVIRONMENT,
+            "version": settings.VERSION,
+            "error": "Database connection unreachable",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+

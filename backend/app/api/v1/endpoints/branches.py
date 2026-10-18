@@ -84,6 +84,13 @@ def grant_branch_access(
     if not target_branch:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target branch not found.")
 
+    if user.role not in ("org_admin", "admin"):
+        if user.branch_id not in (member.branch_id, target_branch.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: Branch manager of '{user.branch_id}' cannot grant access between '{member.branch_id}' and '{target_branch.id}'.",
+            )
+
     # Create grant
     grant = MemberBranchAccess(
         user_id=member.id,

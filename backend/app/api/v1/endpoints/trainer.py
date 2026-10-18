@@ -72,9 +72,16 @@ def list_assigned_members(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AssignedMemberListResponse:
-    # If trainer: only assigned members. If supervisor/admin: all branch members.
+    # If trainer: only assigned members. If branch manager/staff: branch members. If org admin: all members.
     if user.role == "trainer":
         members = get_trainer_assigned_members(db, trainer_id=user.id)
+    elif user.role in ("branch_manager", "manager", "front_desk", "staff"):
+        members = (
+            db.query(User)
+            .filter(User.role == "member", User.is_active == True, User.branch_id == user.branch_id)
+            .order_by(User.name.asc())
+            .all()
+        )
     else:
         members = (
             db.query(User)

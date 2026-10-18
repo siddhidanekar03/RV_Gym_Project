@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.core.auth import get_current_user, require_roles, require_csrf
+from backend.app.core.auth import get_current_user, require_roles, require_csrf, verify_branch_access
 from backend.app.models.user import User
 from backend.app.models.membership import MembershipPlan, PlanPrice
 from backend.app.services.membership_service import (
@@ -179,6 +179,8 @@ def handle_freeze(
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target member not found.")
 
+    verify_branch_access(actor, target_user.branch_id)
+
     try:
         updated = freeze_membership(
             db=db,
@@ -188,6 +190,9 @@ def handle_freeze(
             reason=payload.reason,
         )
         db.commit()
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -215,6 +220,8 @@ def handle_cancel(
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target member not found.")
 
+    verify_branch_access(actor, target_user.branch_id)
+
     try:
         updated = cancel_membership(
             db=db,
@@ -223,6 +230,9 @@ def handle_cancel(
             reason=payload.reason,
         )
         db.commit()
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

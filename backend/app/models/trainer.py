@@ -26,6 +26,7 @@ class TrainerProfile(Base, TimestampMixin):
     rating: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("5.00"), nullable=False)
     max_clients: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     is_accepting_clients: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    photo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="trainer_profile")
 

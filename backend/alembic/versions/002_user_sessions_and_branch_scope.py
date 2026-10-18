@@ -1,6 +1,6 @@
 """002_user_sessions_and_branch_scope
 
-Revision ID: 002_user_sessions_and_branch_scope
+Revision ID: 002_user_sessions_branch_scope
 Revises: 001_initial_rvfitness_schema
 Create Date: 2026-10-14 22:05:00.000000
 
@@ -9,7 +9,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "002_user_sessions_and_branch_scope"
+revision: str = "002_user_sessions_branch_scope"
 down_revision: Union[str, Sequence[str], None] = "001_initial_rvfitness_schema"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column("csrf_token", sa.String(length=64), nullable=False),
         sa.Column("ip_address", sa.String(length=45), nullable=True),
         sa.Column("user_agent", sa.String(length=255), nullable=True),
-        sa.Column("is_revoked", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("is_revoked", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),

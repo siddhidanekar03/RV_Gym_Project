@@ -1,3 +1,5 @@
+import ipaddress
+import socket
 from datetime import datetime, timezone, timedelta
 from typing import Tuple, Optional, Callable, Sequence, Any
 from fastapi import Request, Response, Depends, HTTPException, status
@@ -19,18 +21,68 @@ CSRF_COOKIE_NAME = "rvf_csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
 
 
+def is_trusted_proxy(direct_ip: Optional[str]) -> bool:
+    """
+    Check whether direct_ip matches configured TRUSTED_PROXIES.
+    Supports exact IP string match, CIDR subnets (e.g. '172.24.0.0/16'),
+    and container hostname resolution (e.g. 'prod-nginx').
+    """
+    if not direct_ip or not settings.TRUSTED_PROXIES:
+        return False
+
+    clean_ip = direct_ip.strip()
+    # 1. Exact string match
+    if clean_ip in settings.TRUSTED_PROXIES:
+        return True
+
+    # Parse candidate IP object
+    try:
+        candidate = ipaddress.ip_address(clean_ip)
+    except ValueError:
+        return False
+
+    for proxy in settings.TRUSTED_PROXIES:
+        proxy_clean = str(proxy).strip()
+        if not proxy_clean:
+            continue
+        # 2. CIDR subnet match (e.g. '172.24.0.0/16' or '127.0.0.0/8')
+        if "/" in proxy_clean:
+            try:
+                network = ipaddress.ip_network(proxy_clean, strict=False)
+                if candidate in network:
+                    return True
+            except ValueError:
+                continue
+        # 3. Hostname resolution (e.g. 'prod-nginx')
+        else:
+            try:
+                resolved_ip = socket.gethostbyname(proxy_clean)
+                if resolved_ip == clean_ip:
+                    return True
+            except (socket.gaierror, socket.herror, OSError):
+                continue
+
+    return False
+
+
 def get_client_ip(request: Optional[Any] = None) -> Optional[str]:
-    if not request:
+    """
+    Resolve client IP address with reverse-proxy trust validation.
+    Only trusts X-Forwarded-For if request comes from a configured trusted proxy or non-production environment.
+    """
+    if request is None:
         return None
+    client_obj = getattr(request, "client", None)
+    direct_ip = client_obj.host if (client_obj and hasattr(client_obj, "host")) else None
+
     headers = getattr(request, "headers", None)
     if headers and hasattr(headers, "get"):
         forwarded = headers.get("x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
-    client_obj = getattr(request, "client", None)
-    if client_obj and hasattr(client_obj, "host"):
-        return client_obj.host
-    return None
+            # Allow in development/test or when direct peer is in trusted proxies
+            if settings.ENVIRONMENT not in {"production", "staging"} or is_trusted_proxy(direct_ip):
+                return forwarded.split(",")[0].strip()
+    return direct_ip
 
 
 def create_user_session(
@@ -75,9 +127,24 @@ def set_auth_cookies(
     response: Response,
     raw_session_token: str,
     raw_csrf_token: str,
+    request: Optional[Any] = None,
 ) -> None:
     """Set secure HttpOnly session cookie and readable CSRF cookie."""
-    is_prod = settings.ENVIRONMENT == "production"
+    is_secure = settings.is_cookie_secure()
+
+    # If connection is unencrypted plain HTTP (e.g. local staging served at 127.0.0.1:18000),
+    # cookies must not enforce the Secure flag so modern browsers do not drop or reject them.
+    if request:
+        headers = getattr(request, "headers", None)
+        proto = "https"
+        if headers and hasattr(headers, "get"):
+            proto = (headers.get("x-forwarded-proto") or getattr(getattr(request, "url", None), "scheme", "https")).lower()
+        elif hasattr(request, "url"):
+            proto = getattr(request.url, "scheme", "https").lower()
+        if proto == "http":
+            is_secure = False
+
+    samesite = settings.COOKIE_SAMESITE
     max_age_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
     # 1. HttpOnly signed session cookie
@@ -85,8 +152,8 @@ def set_auth_cookies(
         key=SESSION_COOKIE_NAME,
         value=raw_session_token,
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=max_age_seconds,
     )
@@ -96,29 +163,40 @@ def set_auth_cookies(
         key=CSRF_COOKIE_NAME,
         value=raw_csrf_token,
         httponly=False,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=max_age_seconds,
     )
 
 
-def clear_auth_cookies(response: Response) -> None:
+def clear_auth_cookies(response: Response, request: Optional[Any] = None) -> None:
     """Clear session and CSRF cookies."""
-    is_prod = settings.ENVIRONMENT == "production"
+    is_secure = settings.is_cookie_secure()
+    if request:
+        headers = getattr(request, "headers", None)
+        proto = "https"
+        if headers and hasattr(headers, "get"):
+            proto = (headers.get("x-forwarded-proto") or getattr(getattr(request, "url", None), "scheme", "https")).lower()
+        elif hasattr(request, "url"):
+            proto = getattr(request.url, "scheme", "https").lower()
+        if proto == "http":
+            is_secure = False
+
+    samesite = settings.COOKIE_SAMESITE
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",
         httponly=True,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
     )
     response.delete_cookie(
         key=CSRF_COOKIE_NAME,
         path="/",
         httponly=False,
-        secure=is_prod,
-        samesite="lax",
+        secure=is_secure,
+        samesite=samesite,
     )
 
 
@@ -193,6 +271,18 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_user_optional(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Resolves authenticated User if session cookie or auth header is valid, otherwise returns None."""
+    try:
+        session = get_current_session(request, db)
+        return get_current_user(session, db)
+    except HTTPException:
+        return None
 
 
 def require_csrf(
